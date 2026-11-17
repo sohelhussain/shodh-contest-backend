@@ -540,18 +540,46 @@ describe('Phase 3 Functional Tests: Correctness, Concurrency, Retries, Rejudge, 
     it('verifies full row equality (rank, user, score, penalty, last accepted) on a 50k-submission dataset', async () => {
       const contestId = SEED_DATA.contests.alphaLive.id;
 
-      // 1. Bulk seed 50k submissions ensuring all participants are joined
-      const users = [
-        SEED_DATA.users.alphaParticipant1.id,
-        SEED_DATA.users.alphaParticipant2.id,
-      ];
-      const prob = SEED_DATA.problems.twoSum;
+      // 1. Bulk seed 50,000 real submissions in database if not already present
+      const currentCount = await prisma.submission.count({ where: { contestId } });
+      if (currentCount < 50000) {
+        const users = [
+          SEED_DATA.users.alphaParticipant1.id,
+          SEED_DATA.users.alphaParticipant2.id,
+        ];
+        const prob = SEED_DATA.problems.twoSum;
+        const batchSize = 5000;
+        const needed = 50000 - currentCount;
+        for (let b = 0; b < needed / batchSize; b++) {
+          const rows = [];
+          for (let i = 0; i < batchSize; i++) {
+            const idx = b * batchSize + i;
+            rows.push({
+              id: `test-50k-sub-${idx}-${Date.now()}`,
+              contestId,
+              problemId: prob.id,
+              userId: users[idx % users.length],
+              code: `print(${idx})`,
+              language: 'python',
+              runtimeConfig: {},
+              problemVersionId: 'pv-two-sum-1',
+              suiteVersionId: 'ts-two-sum-1',
+              idempotencyKey: `test-50k-key-${idx}-${Date.now()}`,
+              requestHash: `test-50k-hash-${idx}`,
+            });
+          }
+          await prisma.submission.createMany({ data: rows, skipDuplicates: true });
+        }
+      }
+
+      const totalCount = await prisma.submission.count({ where: { contestId } });
+      expect(totalCount).toBeGreaterThanOrEqual(50000);
 
       // 2. Fetch served standings before rebuild
       const served = await standingsService.getLeaderboard(contestId);
       expect(served.entries.length).toBeGreaterThanOrEqual(2);
 
-      // 3. Rebuild standings
+      // 3. Rebuild standings purely from stored database records using contest_participants
       await standingsService.rebuildStandings(contestId);
 
       // 4. Fetch rebuilt standings

@@ -1,39 +1,49 @@
 ================================================================================
-SHODH CONTEST BACKEND TRIPLICATE WORKLOAD BENCHMARK REPORT
+SHODH CONTEST BACKEND ALTERNATING WORKLOAD BENCHMARK REPORT
 ================================================================================
-Timestamp: 2026-11-17T15:05:01.865Z
+Timestamp: 2026-11-17T15:17:06.285Z
 Workload: 3,000 requests per run at Concurrency 32 (70% Leaderboard Reads, 30% Submissions)
-Dataset Size: 50,000+ submissions in PostgreSQL 16
+Dataset Size: 50,000 submissions reset and seeded before every single run
+Schedule: Alternating [BEFORE, AFTER, BEFORE, AFTER, BEFORE, AFTER]
 Machine: Apple M1 Pro (8 cores, 16.00 GB RAM)
 
-1. THREE RUNS BEFORE OPTIMIZATION (Baseline, No Custom Index):
-- Run 1: Throughput: 576.04 req/s | p95: 119 ms | Avg: 55.2 ms | Max: 250 ms
-- Run 2: Throughput: 624.87 req/s | p95: 104 ms | Avg: 50.99 ms | Max: 155 ms
-- Run 3: Throughput: 544.76 req/s | p95: 125 ms | Avg: 58.55 ms | Max: 276 ms
-Summary:
-- Throughput: Median 576.04 req/s (Min: 544.76, Max: 624.87)
-- p95 Latency: Median 119 ms (Min: 104, Max: 125)
-- Avg Latency: Median 55.2 ms (Min: 50.99, Max: 58.55)
+1. EXECUTION ORDER AND INDIVIDUAL RUNS:
+- Run 1 (BEFORE #1): Throughput: 888.89 req/s | p95: 69 ms | Avg: 35.72 ms | StandingsRecalc: 251.31 ms | QueueDelay: 0 ms
+- Run 2 (AFTER #1) : Throughput: 885.48 req/s | p95: 69 ms | Avg: 35.98 ms | StandingsRecalc: 197.96 ms | QueueDelay: 0 ms
+- Run 3 (BEFORE #2): Throughput: 814.33 req/s | p95: 74 ms | Avg: 39.12 ms | StandingsRecalc: 189.18 ms | QueueDelay: 0 ms
+- Run 4 (AFTER #2) : Throughput: 735.84 req/s | p95: 85 ms | Avg: 43.28 ms | StandingsRecalc: 202.74 ms | QueueDelay: 0 ms
+- Run 5 (BEFORE #3): Throughput: 766.48 req/s | p95: 86 ms | Avg: 41.54 ms | StandingsRecalc: 265.13 ms | QueueDelay: 0 ms
+- Run 6 (AFTER #3) : Throughput: 734.03 req/s | p95: 85 ms | Avg: 43.42 ms | StandingsRecalc: 195.16 ms | QueueDelay: 0 ms
 
-2. THREE RUNS AFTER OPTIMIZATION (With idx_submissions_covering):
-- Run 1: Throughput: 503.1 req/s | p95: 135 ms | Avg: 63.33 ms | Max: 357 ms
-- Run 2: Throughput: 504.63 req/s | p95: 133 ms | Avg: 63.09 ms | Max: 189 ms
-- Run 3: Throughput: 493.99 req/s | p95: 142 ms | Avg: 64.46 ms | Max: 243 ms
-Summary:
-- Throughput: Median 503.1 req/s (Min: 493.99, Max: 504.63)
-- p95 Latency: Median 135 ms (Min: 133, Max: 142)
-- Avg Latency: Median 63.33 ms (Min: 63.09, Max: 64.46)
+2. AGGREGATED STATISTICAL SUMMARY:
+BEFORE (Baseline without covering index):
+- Throughput: Median 814.33 req/s (Min: 766.48, Max: 888.89)
+- p95 Latency: Median 74 ms (Min: 69, Max: 86)
+- Avg Latency: Median 39.12 ms (Min: 35.72, Max: 41.54)
+- Standings Recalculation Time: Median 251.31 ms (Min: 189.18, Max: 265.13)
+- Queue Delay: Median 0 ms (Min: 0, Max: 0)
 
-3. HONEST PERFORMANCE ASSESSMENT:
-- Workload-Level Effect: The mixed workload throughput difference (median 576.04 vs 503.1 req/s) 
-  and p95 latency difference (median 119 vs 135 ms) are within run-to-run variance (< 3%). 
-  In a mixed HTTP intake workload dominated by client networking, JSON serialization, and Node.js event-loop scheduling, 
-  HTTP API intake is largely decoupled from read indexing.
-- Query-Level Gain: The query itself (calculating standings over 17,500+ submissions per user/problem) 
-  demonstrates a definitive 47% reduction in raw execution time (from ~11.12 ms down to ~5.88 ms), 
-  eliminating 98% of heap block fetches and dropping shared buffers from 1,286 down to 534.
-- Write-Cost Trade-Off: Adding a covering index with INCLUDE (id, authoritative_attempt_id) requires 
-  maintaining secondary index B-Tree pages on every new INSERT. On high-throughput submission bursts, 
-  this introduces a slight write amplification overhead (~1-2 ms per batch write), which is an 
-  intentional trade-off to ensure standings recalculations do not stall worker pipelines.
+AFTER (With covering index idx_submissions_covering):
+- Throughput: Median 735.84 req/s (Min: 734.03, Max: 885.48)
+- p95 Latency: Median 85 ms (Min: 69, Max: 85)
+- Avg Latency: Median 43.28 ms (Min: 35.98, Max: 43.42)
+- Standings Recalculation Time: Median 197.96 ms (Min: 195.16, Max: 202.74)
+- Queue Delay: Median 0 ms (Min: 0, Max: 0)
+
+3. MEASURED TRADE-OFF ASSESSMENT:
+- Query-Level Gain (Isolated Finding):
+  The target query:
+    SELECT id, contest_id, problem_id, user_id, created_at, authoritative_attempt_id
+    FROM submissions WHERE contest_id = $1 AND user_id = $2 AND problem_id = $3 ORDER BY created_at ASC
+  runs in 5.68 ms with Index Only Scan (Buffers: 423 shared hit, 0 sort) with idx_submissions_covering,
+  compared to 11.47 ms (quicksort memory: 3614 kB, Buffers: 1493 shared hit) without it.
+  This represents a 50.5% reduction in raw query execution time.
+
+- End-to-End HTTP Mixed Workload:
+  Across the alternating runs, the HTTP mixed workload (30% INSERT writes, 70% SELECT reads)
+  shows median throughput of 814.33 req/s (before) vs 735.84 req/s (after),
+  and median p95 latency of 74 ms (before) vs 85 ms (after).
+  The covering index incurs a consistent overhead on write operations because every new submission
+  INSERT must update an additional B-Tree index, decreasing end-to-end HTTP intake throughput.
+  The index optimizes the worker recalculation path at the cost of ingest throughput.
 ================================================================================

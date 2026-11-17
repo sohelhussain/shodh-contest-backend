@@ -154,27 +154,14 @@ export class StandingsService {
    */
   async rebuildStandings(contestId: string): Promise<void> {
     await this.prisma.$transaction(async (tx) => {
-      // Get all participants who have joined or submitted
+      // Standings are governed strictly by registered contest participants
       const participants = await tx.contestParticipant.findMany({
         where: { contestId },
         select: { userId: true },
       });
 
-      const submissionUsers = await tx.submission.findMany({
-        where: { contestId },
-        select: { userId: true },
-        distinct: ['userId'],
-      });
-
-      const allUserIds = Array.from(
-        new Set([
-          ...participants.map((p) => p.userId),
-          ...submissionUsers.map((s) => s.userId),
-        ]),
-      );
-
-      for (const userId of allUserIds) {
-        await this.updateStandingForUser(tx, contestId, userId);
+      for (const p of participants) {
+        await this.updateStandingForUser(tx, contestId, p.userId);
       }
     });
   }

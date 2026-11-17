@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-11-17T15:06:00.000Z",
-  "dataVersion": "v2.2-50k-triplicate-workload",
+  "timestamp": "2026-11-17T15:17:06.000Z",
+  "dataVersion": "v2.3-50k-alternating-workload",
   "executionMode": "docker-and-mock",
   "config": {
     "NODE_ENV": "development",
@@ -28,53 +28,72 @@
       "Phase 3: Multi-Process Isolation, Concurrency, Retries, Crash Recovery, Rejudge & Rebuild, 50k Full Row Equality (10 passed)"
     ]
   },
-  "triplicateWorkloadBenchmark": {
-    "description": "3 runs before vs 3 runs after, 3,000 requests per run at Concurrency 32 (70% Leaderboard Reads, 30% Submissions)",
+  "alternatingWorkloadBenchmark": {
+    "description": "Rigorous alternating schedule [BEFORE, AFTER, BEFORE, AFTER, BEFORE, AFTER] with full 50,000-submission reset and VACUUM ANALYZE before each run. Workload: 3,000 requests per run at Concurrency 32 (70% Leaderboard Reads, 30% Submissions)",
     "datasetSubmissions": 50000,
     "machine": "Apple M1 Pro (8 cores, 16.00 GB RAM)",
     "beforeBaseline": {
       "throughputReqPerSec": {
-        "median": 576.04,
-        "min": 544.76,
-        "max": 624.87
+        "median": 814.33,
+        "min": 766.48,
+        "max": 888.89
       },
       "p95LatencyMs": {
-        "median": 119.0,
-        "min": 104.0,
-        "max": 125.0
+        "median": 74.0,
+        "min": 69.0,
+        "max": 86.0
       },
       "avgLatencyMs": {
-        "median": 55.20,
-        "min": 50.99,
-        "max": 58.55
+        "median": 39.12,
+        "min": 35.72,
+        "max": 41.54
+      },
+      "standingsRecalculationMs": {
+        "median": 251.31,
+        "min": 189.18,
+        "max": 265.13
+      },
+      "queueDelayMs": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
       }
     },
     "afterCoveringIndex": {
       "throughputReqPerSec": {
-        "median": 503.10,
-        "min": 493.99,
-        "max": 504.63
+        "median": 735.84,
+        "min": 734.03,
+        "max": 885.48
       },
       "p95LatencyMs": {
-        "median": 135.0,
-        "min": 133.0,
-        "max": 142.0
+        "median": 85.0,
+        "min": 69.0,
+        "max": 85.0
       },
       "avgLatencyMs": {
-        "median": 63.33,
-        "min": 63.09,
-        "max": 64.46
+        "median": 43.28,
+        "min": 35.98,
+        "max": 43.42
+      },
+      "standingsRecalculationMs": {
+        "median": 197.96,
+        "min": 195.16,
+        "max": 202.74
+      },
+      "queueDelayMs": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
       }
     },
-    "workloadAssessment": "Workload difference is within normal client-side HTTP/GC variance. End-to-end API intake throughput slightly decreases by ~12% under 30% write workload due to the write-cost trade-off of maintaining the secondary index B-Tree on every submission INSERT.",
+    "measuredTradeOff": "The covering index idx_submissions_covering loses in the mixed HTTP intake workload (throughput median drops from 814.33 req/s to 735.84 req/s; p95 increases from 74 ms to 85 ms) because maintaining the additional secondary index B-Tree on every submission INSERT adds write overhead. However, the index achieves its intended goal inside the worker: it lowers standings recalculation duration from median 251.31 ms down to 197.96 ms.",
     "queryLevelGain": {
-      "baselineExecutionTimeMs": 11.12,
-      "coveringIndexExecutionTimeMs": 5.88,
-      "reductionPercent": 47.1,
-      "heapFetches": "Reduced from 1,269 blocks to 319 (Index Only Scan)",
+      "baselineExecutionTimeMs": 11.47,
+      "coveringIndexExecutionTimeMs": 5.68,
+      "reductionPercent": 50.5,
+      "heapFetches": "Reduced from 1,471 heap blocks (25,007 rows) to 14 (Index Only Scan)",
       "sortEliminated": true
-    },
-    "writeCostTradeOff": "Adding idx_submissions_covering with INCLUDE (id, authoritative_attempt_id) imposes a modest write amplification on submissions.create (~1-2 ms per insert) in exchange for cutting worker standings recalculation time by nearly half (11.12 ms to 5.88 ms), preventing worker pipeline congestion during high submission volume."
+    }
   },
   "injectedFailure": {
     "failpoint": "crash_before_ack",
@@ -82,12 +101,12 @@
     "status": "RECOVERED_AND_COMPLETED_NO_DUPLICATE_POINTS"
   },
   "queryOptimization": {
-    "datasetSize": 50900,
+    "datasetSize": 50000,
     "targetQuery": "SELECT id, contest_id, problem_id, user_id, created_at, authoritative_attempt_id FROM submissions WHERE contest_id = $1 AND user_id = $2 AND problem_id = $3 ORDER BY created_at ASC",
     "migrationApplied": "20261117145000_covering_index",
     "indexCreated": "CREATE INDEX idx_submissions_covering ON submissions (contest_id, user_id, problem_id, created_at ASC) INCLUDE (id, authoritative_attempt_id)",
     "traceSaved": "results/explain-analyze.txt",
-    "rebuildStandingsVerification": "PASSED_100_PERCENT_ROW_MATCH_ON_50K_DATASET",
+    "rebuildStandingsVerification": "PASSED_100_PERCENT_FULL_ROW_MATCH_ON_50K_DATASET",
     "status": "OPTIMIZATION_CONFIRMED"
   }
 }

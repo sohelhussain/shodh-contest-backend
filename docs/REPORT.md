@@ -113,21 +113,24 @@ CREATE INDEX idx_submissions_covering
 ON submissions (contest_id, user_id, problem_id, created_at ASC)
 INCLUDE (id, authoritative_attempt_id);
 ```
-- **Result**: **SUCCESS (Execution time: 5.88 ms — 47% reduction in latency vs baseline, 74% reduction vs non-covering index)**.
-- **Root Cause**: Converts the execution into an **Index Only Scan**. Reads only 534 buffers, completely eliminates heap sorting, and avoids visiting table heap blocks for 98% of rows.
+- **Result**: **SUCCESS (Execution time: 5.68 ms — 50.5% reduction in latency vs baseline, 75% reduction vs non-covering index)**.
+- **Root Cause**: Converts the execution into an **Index Only Scan**. Reads only 423 buffers, completely eliminates heap sorting, and avoids visiting table heap blocks for 99.9% of rows.
 
-### C. Triplicate Workload Benchmark (3 Runs Before vs. 3 Runs After)
-Tested on an Apple M1 Pro (8 cores, 16.00 GB RAM) with 3,000 requests per run at concurrency 32 (70% reads, 30% writes) against 50,000 rows:
+### C. Rigorous Alternating Workload Benchmark (Alternating 6 Runs on 50,000 Dataset)
+Tested on an Apple M1 Pro (8 cores, 16.00 GB RAM) with 3,000 requests per run at concurrency 32 (70% leaderboard reads, 30% submission writes) against 50,000 rows. Before every single run, the database was reset and seeded to the exact 50,000-submission state, followed by `VACUUM ANALYZE submissions`. The benchmark alternated strictly: `[BEFORE, AFTER, BEFORE, AFTER, BEFORE, AFTER]`.
 
-| Condition | Throughput (Median [Min, Max]) | p95 Latency (Median [Min, Max]) | Avg Latency (Median [Min, Max]) |
+| Metric | Before Baseline (Median [Min, Max]) | After Covering Index (Median [Min, Max]) | Net Measured Impact |
 | :--- | :--- | :--- | :--- |
-| **Before (Baseline)** | **576.04 req/s** [544.76, 624.87] | **119 ms** [104, 125] | **55.20 ms** [50.99, 58.55] |
-| **After (Covering Index)** | **503.10 req/s** [493.99, 504.63] | **135 ms** [133, 142] | **63.33 ms** [63.09, 64.46] |
+| **HTTP Throughput** | **814.33 req/s** [766.48, 888.89] | **735.84 req/s** [734.03, 885.48] | -9.6% (Write overhead on INSERT) |
+| **HTTP p95 Latency** | **74.0 ms** [69.0, 86.0] | **85.0 ms** [69.0, 85.0] | +14.8% (Slightly slower HTTP write path) |
+| **HTTP Avg Latency** | **39.12 ms** [35.72, 41.54] | **43.28 ms** [35.98, 43.42] | +4.16 ms |
+| **Standings Recalculation Time** | **251.31 ms** [189.18, 265.13] | **197.96 ms** [195.16, 202.74] | **-21.2% faster in worker** |
+| **Queue Delay (created to started)** | **0.0 ms** [0.0, 0.0] | **0.0 ms** [0.0, 0.0] | 0.0 ms |
 
-#### Assessment of Workload vs Query-Level Gain and Write-Cost Trade-Off:
-1. **Workload Variance**: The mixed client-facing throughput and p95 latency differences are within normal run-to-run HTTP/Node runtime variance. Because API submission intake merely performs an asynchronous enqueue transaction (`submission`, `attempt 1`, `job`), the API intake is decoupled from standings calculation.
-2. **Query-Level Gain**: The query itself (calculating standings over 17,500+ submissions per user/problem) achieves a definitive **47% reduction in execution time (11.12 ms to 5.88 ms)**, eliminating quicksort and avoiding 1,200+ heap block fetches.
-3. **Write-Cost Trade-Off**: Maintaining secondary B-Tree pages for `idx_submissions_covering` with its `INCLUDE` payload introduces a slight write amplification overhead on submission inserts (~1-2 ms per batch write). This trade-off is deliberate: spending minimal extra CPU at write time ensures background worker standings recalculations complete in half the time, preventing worker queue backlog under heavy contest judging loads.
+#### Measured Trade-Off Assessment:
+1. **End-to-End Workload Result**: When measuring the mixed HTTP intake workload (which contains 30% INSERT writes), the covering index loses end-to-end: median throughput drops from 814.33 req/s to 735.84 req/s. Every new submission INSERT must maintain an additional B-Tree index, which incurs write overhead on the API transaction.
+2. **Query-Level & Worker Recalculation Gain**: As an isolated query, the target query running under `idx_submissions_covering` drops execution time from 11.47 ms down to 5.68 ms (-50.5%), completely eliminating a 3.6 MB quicksort and dropping buffer hits from 1,493 to 423. In the worker process, this query optimization cuts total standings recalculation duration across problem sets for 16,666+ user submissions from a median of 251.31 ms down to 197.96 ms (-21.2%).
+3. **Plain Trade-off Statement**: Adding `idx_submissions_covering` is a deliberate architectural trade-off that sacrifices ~9.6% of frontend HTTP ingestion throughput to accelerate background worker recalculation time by 21.2%.
 
 ---
 
