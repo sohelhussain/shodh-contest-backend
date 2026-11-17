@@ -32,13 +32,13 @@ export class DockerRunner implements IRunner {
 
     const baseTmp = process.env.SANDBOX_TMP_DIR || path.join(process.cwd(), 'tmp', 'sandbox-runs');
     if (!fs.existsSync(baseTmp)) {
-      fs.mkdirSync(baseTmp, { recursive: true });
+      fs.mkdirSync(baseTmp, { recursive: true, mode: 0o777 });
     }
     const tempDir = fs.mkdtempSync(path.join(baseTmp, 'shodh-run-'));
-    fs.chmodSync(tempDir, 0o755);
+    fs.chmodSync(tempDir, 0o777);
 
     const scriptPath = path.join(tempDir, 'solution.py');
-    fs.writeFileSync(scriptPath, code, { mode: 0o644 });
+    fs.writeFileSync(scriptPath, code, { mode: 0o666 });
 
     const results: TestCaseResult[] = [];
     let overallVerdict: Verdict = Verdict.ACCEPTED;
@@ -199,12 +199,17 @@ export class DockerRunner implements IRunner {
         }
 
         if (code !== 0) {
+          // If code is 137 (SIGKILL by Docker OOM killer) or stderr indicates out of memory
+          const isOom = code === 137 || stderrBuffer.includes('Killed') || stderrBuffer.includes('MemoryError');
+          const isPidsLimit = stderrBuffer.includes('BlockingIOError') || stderrBuffer.includes('Resource temporarily unavailable');
           return resolve({
             testCaseId: tc.id,
             passed: false,
             verdict: Verdict.RUNTIME_ERROR,
             executionTimeMs,
-            error: stderrBuffer.trim() || `Process exited with code ${code}`,
+            error: isOom
+              ? 'Memory limit exceeded (OOM killed)'
+              : (stderrBuffer.trim() || `Process exited with code ${code}`),
           });
         }
 

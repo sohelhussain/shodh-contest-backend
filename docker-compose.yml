@@ -1,6 +1,12 @@
-version: '3.8'
-
 services:
+  python-runner:
+    image: shodh-python-runner:1
+    build:
+      context: ./runner
+      dockerfile: Dockerfile
+    command: ["true"]
+    restart: "no"
+
   db:
     image: postgres:16-alpine
     container_name: shodh-postgres
@@ -24,12 +30,14 @@ services:
       context: .
       dockerfile: Dockerfile
     command: >
-      sh -c "npx prisma migrate deploy && node -e 'require(\"./dist/prisma/seed.js\").seed().catch(e => { console.error(e); process.exit(1); })' || npx ts-node prisma/seed.ts"
+      sh -c "npx prisma migrate deploy && (node dist/prisma/seed.js || npx ts-node prisma/seed.ts)"
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-shodh}:${POSTGRES_PASSWORD:-shodh_dev_password}@db:5432/${POSTGRES_DB:-shodh}?schema=public
     depends_on:
       db:
         condition: service_healthy
+      python-runner:
+        condition: service_completed_successfully
 
   api:
     build:
@@ -61,6 +69,7 @@ services:
       replicas: 2
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ${PWD:-.}/tmp/sandbox-runs:${PWD:-.}/tmp/sandbox-runs
     environment:
       NODE_ENV: ${NODE_ENV:-development}
       DATABASE_URL: postgresql://${POSTGRES_USER:-shodh}:${POSTGRES_PASSWORD:-shodh_dev_password}@db:5432/${POSTGRES_DB:-shodh}?schema=public
@@ -73,6 +82,7 @@ services:
       RUNNER_MODE: ${RUNNER_MODE:-docker}
       RUNNER_IMAGE: ${RUNNER_IMAGE:-shodh-python-runner:1}
       DOCKER_HOST: unix:///var/run/docker.sock
+      SANDBOX_TMP_DIR: ${PWD:-.}/tmp/sandbox-runs
       RUN_CPUS: ${RUN_CPUS:-0.5}
       RUN_MEMORY_MB: ${RUN_MEMORY_MB:-128}
       RUN_PIDS_LIMIT: ${RUN_PIDS_LIMIT:-32}

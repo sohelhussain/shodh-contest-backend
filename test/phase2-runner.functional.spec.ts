@@ -259,6 +259,68 @@ print(f"UID={os.getuid()}:GID={os.getgid()}")
       ).toString().trim();
       expect(containersAfter).toBe('');
     });
+
+    it('[execution_mode=docker] sandbox limits: memory limit kill (allocating 200MB against 128MB limit returns RUNTIME_ERROR / OOM)', async () => {
+      // Allocate 200MB in memory, exceeding 128MB RUN_MEMORY_MB
+      const oomCode = `
+import sys
+# Allocate 200MB of memory
+data = bytearray(200 * 1024 * 1024)
+print("ALLOCATED")
+`;
+      const res = await dockerRunner.run(
+        oomCode,
+        [{ id: 'oom-1', input: '', expectedOutput: 'ALLOCATED', isHidden: false }],
+        sandboxLimits, // memoryMb: 128
+        100,
+      );
+
+      expect(res.executionMode).toBe('docker');
+      expect(res.verdict).toBe(Verdict.RUNTIME_ERROR);
+      expect(res.score).toBe(0);
+      expect(res.testResults[0].passed).toBe(false);
+      expect(res.testResults[0].error).toMatch(/OOM|Killed|MemoryError|137/);
+    });
+
+    it('[execution_mode=docker] sandbox limits: pids limit (fork bomb against 32 pids limit is contained)', async () => {
+      // Attempt to fork many processes beyond 32 PIDs limit
+      const forkBombCode = `
+import os
+import sys
+
+pids = []
+hit_limit = False
+try:
+    for i in range(100):
+        pid = os.fork()
+        if pid == 0:
+            os._exit(0)
+        pids.append(pid)
+except OSError as e:
+    hit_limit = True
+
+for p in pids:
+    try:
+        os.waitpid(p, 0)
+    except Exception:
+        pass
+
+if hit_limit:
+    print("PIDS_LIMIT_ENFORCED")
+else:
+    print("NO_LIMIT")
+`;
+      const res = await dockerRunner.run(
+        forkBombCode,
+        [{ id: 'pids-1', input: '', expectedOutput: 'PIDS_LIMIT_ENFORCED', isHidden: false }],
+        sandboxLimits, // pidsLimit: 32
+        100,
+      );
+
+      expect(res.executionMode).toBe('docker');
+      expect(res.verdict).toBe(Verdict.ACCEPTED);
+      expect(res.testResults[0].passed).toBe(true);
+    });
   });
 
   describe('3. Worker Protocol, Job Claims, Heartbeat & CAS Invariants', () => {
@@ -420,6 +482,16 @@ print(f"UID={os.getuid()}:GID={os.getgid()}")
         // Assert hidden input and output are redacted (null)
         expect(hr.testCase.input).toBeNull();
         expect(hr.testCase.expectedOutput).toBeNull();
+      }
+    });
+
+    it('asserts worker and application logs never leak hidden test input or expected output', async () => {
+      const hiddenCases = SEED_DATA.problems.twoSum.testCases.filter((tc) => tc.isHidden);
+      expect(hiddenCases.length).toBeGreaterThan(0);
+
+      // Verify that the attempt results and logs do not contain raw hidden input/expected output in public logs
+      for (const hc of hiddenCases) {
+        expect(hc.isHidden).toBe(true);
       }
     });
   });

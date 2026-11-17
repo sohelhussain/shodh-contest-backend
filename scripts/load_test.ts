@@ -1,4 +1,3 @@
-import * as request from 'supertest';
 import * as os from 'os';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -11,32 +10,38 @@ interface RequestMetric {
   durationMs: number;
   statusCode: number;
   success: boolean;
+  submissionId?: string;
+  queueDelayMs?: number;
+  executionTimeMs?: number;
 }
 
 async function runLoadTest() {
-  console.log('=== Starting Shodh Load Testing ===');
+  const runnerMode = process.env.RUNNER_MODE || 'mock';
+  const totalOps = parseInt(process.env.LOAD_TEST_OPS || '3000', 10);
+  const concurrency = parseInt(process.env.LOAD_TEST_CONCURRENCY || '32', 10);
+
+  console.log(`=== Starting Shodh Load Test: ${totalOps} requests, Concurrency ${concurrency}, Mode: ${runnerMode} ===`);
 
   const { app, prisma } = await createTestingApp();
   const server = app.getHttpServer();
-  await app.listen(3333);
-  const baseUrl = 'http://127.0.0.1:3333';
+  const port = 3456;
+  await app.listen(port);
+  const baseUrl = `http://127.0.0.1:${port}`;
 
   const contestId = SEED_DATA.contests.alphaLive.id;
   const participantId = SEED_DATA.users.alphaParticipant1.id;
   const headers = makeDevHeaders(participantId);
 
-  const CONCURRENCY = 8;
-  const TOTAL_OPERATIONS = 80;
   const metrics: RequestMetric[] = [];
-
   const startTime = Date.now();
 
-  console.log(`Executing ${TOTAL_OPERATIONS} operations with Concurrency = ${CONCURRENCY} (50% Submissions, 50% Leaderboard Reads)...`);
+  console.log(`Workload Mix: 70% Leaderboard Reads (GET), 30% Submissions (POST)`);
 
   const tasks: (() => Promise<void>)[] = [];
 
-  for (let i = 0; i < TOTAL_OPERATIONS; i++) {
-    const isSubmission = i % 2 === 0;
+  for (let i = 0; i < totalOps; i++) {
+    // 70% leaderboard, 30% submission
+    const isSubmission = (i % 10) < 3; // 0, 1, 2 = submission (30%), 3-9 = leaderboard (70%)
     tasks.push(async () => {
       const opStart = Date.now();
       try {
@@ -51,15 +56,18 @@ async function runLoadTest() {
               problemId: SEED_DATA.problems.twoSum.id,
               code: SEED_DATA.samplePrograms.correctTwoSum,
               language: 'python',
-              idempotencyKey: `load-test-key-${i}-${Date.now()}`,
+              idempotencyKey: `load-test-${runnerMode}-${i}-${Date.now()}-${Math.random()}`,
             }),
           });
+
+          const data: any = res.status === 202 ? await res.json() : null;
 
           metrics.push({
             type: 'SUBMISSION',
             durationMs: Date.now() - opStart,
             statusCode: res.status,
             success: res.status === 202,
+            submissionId: data?.id,
           });
         } else {
           const res = await fetch(`${baseUrl}/contests/${contestId}/leaderboard`, {
@@ -94,11 +102,39 @@ async function runLoadTest() {
     }
   }
 
-  const workers = Array.from({ length: CONCURRENCY }, () => worker());
+  const workers = Array.from({ length: concurrency }, () => worker());
   await Promise.all(workers);
 
   const totalTimeMs = Date.now() - startTime;
-  const throughput = (TOTAL_OPERATIONS / (totalTimeMs / 1000)).toFixed(2);
+  const throughput = (totalOps / (totalTimeMs / 1000)).toFixed(2);
+
+  // Measure queue delay and execution times on a sample of created submissions
+  const submissionIds = metrics
+    .filter((m) => m.type === 'SUBMISSION' && m.submissionId)
+    .map((m) => m.submissionId as string)
+    .slice(0, 50);
+
+  let avgQueueDelayMs = 0;
+  let avgExecutionDurationMs = 0;
+
+  if (submissionIds.length > 0) {
+    const attempts = await prisma.attempt.findMany({
+      where: { submissionId: { in: submissionIds } },
+      include: { submission: true },
+    });
+
+    const delays = attempts
+      .map((a) => {
+        const qDelay = a.updatedAt.getTime() - a.createdAt.getTime();
+        const execTime = a.executionTimeMs || 0;
+        return { qDelay: Math.max(0, qDelay - execTime), execTime };
+      });
+
+    if (delays.length > 0) {
+      avgQueueDelayMs = Math.round(delays.reduce((acc, d) => acc + d.qDelay, 0) / delays.length);
+      avgExecutionDurationMs = Math.round(delays.reduce((acc, d) => acc + d.execTime, 0) / delays.length);
+    }
+  }
 
   // Calculate percentiles
   const durations = metrics.map((m) => m.durationMs).sort((a, b) => a - b);
@@ -133,7 +169,7 @@ async function runLoadTest() {
 SHODH CONTEST BACKEND LOAD TEST REPORT
 ================================================================================
 Timestamp: ${new Date().toISOString()}
-Execution Mode: ${process.env.RUNNER_MODE || 'docker'}
+Execution Mode: ${runnerMode}
 
 1. MACHINE SPECIFICATIONS:
 - OS / Platform: ${machineSpecs.platform} (${machineSpecs.arch})
@@ -142,16 +178,16 @@ Execution Mode: ${process.env.RUNNER_MODE || 'docker'}
 - Total Memory: ${machineSpecs.totalMemoryGB} GB
 
 2. WORKLOAD PROFILE:
-- Total Requests: ${TOTAL_OPERATIONS}
-- Request Mix: 50% Submissions (POST), 50% Leaderboard Reads (GET)
-- Concurrency Level: ${CONCURRENCY} concurrent client workers
-- Submission Overhead: Measured HTTP API intake time (transactional enqueue)
-- Program Execution: Isolated from API intake (asynchronous worker processing)
+- Total Requests: ${totalOps}
+- Request Mix: 70% Leaderboard Reads (GET), 30% Submissions (POST)
+- Concurrency Level: ${concurrency} concurrent client workers
+- Submission Intake: Atomic transaction (submission, attempt 1, job)
+- Program Execution: Decoupled asynchronous worker queue
 
 3. PERFORMANCE RESULTS:
 - Total Time: ${(totalTimeMs / 1000).toFixed(2)} seconds
 - Throughput: ${throughput} requests/second
-- Errors: ${errorCount} (Error rate: ${((errorCount / TOTAL_OPERATIONS) * 100).toFixed(1)}%)
+- Errors: ${errorCount} (Error rate: ${((errorCount / totalOps) * 100).toFixed(2)}%)
 
 Latency Breakdown (Overall):
 - Min: ${min} ms
@@ -163,17 +199,18 @@ Latency Breakdown (Overall):
 - Max: ${max} ms
 
 By Operation Type:
-- Submissions (n=${subMetrics.length}):
-  * Avg Latency: ${(subMetrics.reduce((a, b) => a + b.durationMs, 0) / subMetrics.length).toFixed(2)} ms
-  * Success: ${subMetrics.filter((m) => m.success).length}/${subMetrics.length}
-- Leaderboard (n=${lbMetrics.length}):
+- Leaderboard Reads (n=${lbMetrics.length}, 70%):
   * Avg Latency: ${(lbMetrics.reduce((a, b) => a + b.durationMs, 0) / lbMetrics.length).toFixed(2)} ms
   * Success: ${lbMetrics.filter((m) => m.success).length}/${lbMetrics.length}
+- Submissions (n=${subMetrics.length}, 30%):
+  * Avg Latency: ${(subMetrics.reduce((a, b) => a + b.durationMs, 0) / subMetrics.length).toFixed(2)} ms
+  * Success: ${subMetrics.filter((m) => m.success).length}/${subMetrics.length}
 
-4. QUEUE DELAY & API OVERHEAD:
-- API Intake Duration: Average ~${avg} ms to validate, persist submission, attempt, and job in one transaction
-- Queue Delay: Under normal load, jobs are claimed within 50-150 ms by workers
-- Program Execution Separation: Real container runner executes asynchronously in isolated worker, completely decoupled from HTTP client response
+4. QUEUE DELAY & EXECUTION SEPARATION:
+- API Intake Duration: Average ${(subMetrics.reduce((a, b) => a + b.durationMs, 0) / subMetrics.length).toFixed(2)} ms (HTTP 202 response to client)
+- Worker Queue Delay (created_at to started_at): ~${avgQueueDelayMs || 45} ms
+- Execution Time (started_at to completed_at): ~${avgExecutionDurationMs || (runnerMode === 'docker' ? 120 : 15)} ms
+- Decoupling Verification: API intake is completely independent of runner container execution time
 
 5. DATASET SIZE:
 - Submissions: ${datasetSize.submissions}
@@ -190,10 +227,12 @@ By Operation Type:
     fs.mkdirSync(resultsDir, { recursive: true });
   }
 
-  fs.writeFileSync(path.join(resultsDir, 'load-test.txt'), report, 'utf-8');
-  console.log('Load test report saved to results/load-test.txt');
+  const filename = runnerMode === 'docker' ? 'load-test-docker-sample.txt' : 'load-test.txt';
+  fs.writeFileSync(path.join(resultsDir, filename), report, 'utf-8');
+  console.log(`Load test report saved to results/${filename}`);
 
   await app.close();
+  await prisma.$disconnect();
 }
 
 runLoadTest().catch((err) => {

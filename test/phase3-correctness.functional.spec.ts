@@ -5,6 +5,8 @@ import { SEED_DATA } from '../prisma/seed';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { StandingsService } from '../src/standings/standings.service';
 import { Verdict, AttemptStatus, JobStatus } from '@prisma/client';
+import { fork } from 'child_process';
+import * as path from 'path';
 
 describe('Phase 3 Functional Tests: Correctness, Concurrency, Retries, Rejudge, and Standings Rebuild', () => {
   let app: INestApplication;
@@ -78,36 +80,195 @@ describe('Phase 3 Functional Tests: Correctness, Concurrency, Retries, Rejudge, 
   });
 
   describe('2. Competing Workers & FOR UPDATE SKIP LOCKED Mutual Exclusion', () => {
-    it('ensures two competing workers claiming concurrently never receive the same job', async () => {
+    it('spawns two separate Node processes against the same DB and ensures they never receive the same job', async () => {
+      // First clean up any pre-existing queued or orphaned jobs to ensure clean slate
+      await prisma.job.updateMany({
+        where: { status: { in: ['QUEUED', 'RUNNING'] } },
+        data: { status: 'COMPLETED' },
+      });
+
       const aliceHeaders = makeDevHeaders(SEED_DATA.users.alphaParticipant1.id);
-      const judgeHeaders = makeJudgeHeaders();
 
       // Submit a single problem
-      await request(app.getHttpServer())
+      const subRes = await request(app.getHttpServer())
         .post(`/contests/${SEED_DATA.contests.alphaLive.id}/submissions`)
         .set(aliceHeaders)
         .send({
           problemId: SEED_DATA.problems.twoSum.id,
           code: 'print(10)',
-          idempotencyKey: 'competing-workers-sub-' + Date.now(),
+          idempotencyKey: 'competing-separate-nodes-' + Date.now(),
         });
 
-      // Two workers fire claims at the exact same time
-      const [claimWorkerA, claimWorkerB] = await Promise.all([
-        request(app.getHttpServer()).post('/judge/jobs/claim').set(judgeHeaders).send({ workerId: 'worker-node-A' }),
-        request(app.getHttpServer()).post('/judge/jobs/claim').set(judgeHeaders).send({ workerId: 'worker-node-B' }),
-      ]);
+      expect(subRes.status).toBe(202);
 
-      expect(claimWorkerA.status).toBe(200);
-      expect(claimWorkerB.status).toBe(200);
+      const runnerScript = path.join(process.cwd(), 'dist/test/competing-worker-runner.js');
 
-      const jobA = claimWorkerA.body.job;
-      const jobB = claimWorkerB.body.job;
+      // Spawn two distinct Node processes
+      const proc1 = fork(runnerScript, ['proc-worker-1']);
+      const proc2 = fork(runnerScript, ['proc-worker-2']);
 
-      // Both cannot have the same job ID
-      if (jobA && jobB) {
-        expect(jobA.jobId).not.toBe(jobB.jobId);
+      const readyBarrier = new Promise<void>((resolve) => {
+        let readyCount = 0;
+        const checkReady = (msg: any) => {
+          if (msg && msg.ready) {
+            readyCount++;
+            if (readyCount === 2) resolve();
+          }
+        };
+        proc1.on('message', checkReady);
+        proc2.on('message', checkReady);
+      });
+
+      // Wait for both worker processes to be booted and connected
+      await readyBarrier;
+
+      // Trigger simultaneous claim in both processes
+      const claim1Promise = new Promise<any>((resolve) => {
+        proc1.on('message', (msg: any) => {
+          if (msg && msg.success !== undefined) resolve(msg);
+        });
+      });
+      const claim2Promise = new Promise<any>((resolve) => {
+        proc2.on('message', (msg: any) => {
+          if (msg && msg.success !== undefined) resolve(msg);
+        });
+      });
+
+      proc1.send({ action: 'claim' });
+      proc2.send({ action: 'claim' });
+
+      const [res1, res2] = await Promise.all([claim1Promise, claim2Promise]);
+
+      expect(res1.success).toBe(true);
+      expect(res2.success).toBe(true);
+
+      const job1 = res1.result;
+      const job2 = res2.result;
+
+      // Mutual exclusion check: exactly one process can claim this single job
+      const claimedJobs = [job1, job2].filter(Boolean);
+      expect(claimedJobs.length).toBe(1);
+      if (job1 && job2) {
+        expect(job1.jobId).not.toBe(job2.jobId);
       }
+    });
+
+    it('dispatch interruption: worker dies before claiming, resumed worker processes job cleanly', async () => {
+      const aliceHeaders = makeDevHeaders(SEED_DATA.users.alphaParticipant1.id);
+      const judgeHeaders = makeJudgeHeaders();
+
+      // Submit
+      const subRes = await request(app.getHttpServer())
+        .post(`/contests/${SEED_DATA.contests.alphaLive.id}/submissions`)
+        .set(aliceHeaders)
+        .send({
+          problemId: SEED_DATA.problems.twoSum.id,
+          code: 'print("interruption-test")',
+          idempotencyKey: 'dispatch-interrupt-' + Date.now(),
+        });
+      expect(subRes.status).toBe(202);
+
+      // Verify job is initially QUEUED
+      const jobs = await prisma.job.findMany({
+        where: { attempt: { submissionId: subRes.body.id } },
+      });
+      expect(jobs.length).toBe(1);
+      expect(jobs[0].status).toBe(JobStatus.QUEUED);
+
+      // Resumed worker claims cleanly
+      const claimRes = await request(app.getHttpServer())
+        .post('/judge/jobs/claim')
+        .set(judgeHeaders)
+        .send({ workerId: 'worker-resumed' });
+
+      expect(claimRes.status).toBe(200);
+      expect(claimRes.body.job).toBeDefined();
+      expect(claimRes.body.job.jobId).toBe(jobs[0].id);
+    });
+
+    it('crash after judging but before ack: job replays, no duplicate score awarded', async () => {
+      const aliceHeaders = makeDevHeaders(SEED_DATA.users.alphaParticipant1.id);
+      const judgeHeaders = makeJudgeHeaders();
+
+      // Submit
+      const subRes = await request(app.getHttpServer())
+        .post(`/contests/${SEED_DATA.contests.alphaLive.id}/submissions`)
+        .set(aliceHeaders)
+        .send({
+          problemId: SEED_DATA.problems.twoSum.id,
+          code: SEED_DATA.samplePrograms.correctTwoSum,
+          idempotencyKey: 'crash-before-ack-' + Date.now(),
+        });
+      expect(subRes.status).toBe(202);
+
+      // Worker 1 claims job
+      const claim1 = await request(app.getHttpServer())
+        .post('/judge/jobs/claim')
+        .set(judgeHeaders)
+        .send({ workerId: 'worker-crash-before-ack' });
+
+      const job1 = claim1.body.job;
+      expect(job1).toBeDefined();
+
+      // Worker 1 crashes before sending ack / complete.
+      // Lease expires:
+      await prisma.job.update({
+        where: { id: job1.jobId },
+        data: { leaseExpiresAt: new Date(Date.now() - 5000) },
+      });
+
+      // Worker 2 claims the replayed job
+      const claim2 = await request(app.getHttpServer())
+        .post('/judge/jobs/claim')
+        .set(judgeHeaders)
+        .send({ workerId: 'worker-replay-ack' });
+
+      const job2 = claim2.body.job;
+      expect(job2).toBeDefined();
+      expect(job2.jobId).toBe(job1.jobId);
+      expect(job2.leaseToken).not.toBe(job1.leaseToken);
+
+      // Worker 2 completes attempt successfully
+      const compRes = await request(app.getHttpServer())
+        .post(`/judge/attempts/${job2.attemptId}/complete`)
+        .set(judgeHeaders)
+        .send({
+          workerId: 'worker-replay-ack',
+          leaseToken: job2.leaseToken,
+          verdict: Verdict.ACCEPTED,
+          score: 100,
+          executionTimeMs: 25,
+          testResults: [],
+        });
+
+      expect(compRes.status).toBe(200);
+
+      // Stale Worker 1 wakes up and tries to complete late
+      const staleComp = await request(app.getHttpServer())
+        .post(`/judge/attempts/${job1.attemptId}/complete`)
+        .set(judgeHeaders)
+        .send({
+          workerId: 'worker-crash-before-ack',
+          leaseToken: job1.leaseToken,
+          verdict: Verdict.ACCEPTED,
+          score: 100,
+          executionTimeMs: 25,
+          testResults: [],
+        });
+
+      expect(staleComp.status).toBe(200);
+      expect(staleComp.body.staleWorker).toBe(true); // Stale worker discarded
+
+      // Verify standing has exactly 100 score, no duplicate points awarded
+      const standing = await prisma.standing.findUnique({
+        where: {
+          contestId_userId: {
+            contestId: SEED_DATA.contests.alphaLive.id,
+            userId: SEED_DATA.users.alphaParticipant1.id,
+          },
+        },
+      });
+      expect(standing?.totalScore).toBe(100);
     });
   });
 

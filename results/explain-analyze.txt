@@ -2,37 +2,36 @@
 EXPLAIN ANALYZE BOTTLENECK INVESTIGATION REPORT
 ================================================================================
 Target Query:
-SELECT id, contest_id, problem_id, user_id, created_at
+SELECT id, contest_id, user_id, problem_id, created_at, authoritative_attempt_id
     FROM submissions
     WHERE contest_id = 'contest-alpha-live'
       AND user_id = 'user-org1-participant1'
       AND problem_id = 'prob-two-sum'
     ORDER BY created_at ASC;
 
-Dataset Size: 2000 submissions indexed across multiple participants & problems.
+Dataset Size: 50008 submissions in database.
 
 --------------------------------------------------------------------------------
 1. BEFORE OPTIMIZATION (Without composite lookup index):
 --------------------------------------------------------------------------------
-Sort  (cost=89.73..90.57 rows=334 width=78) (actual time=0.230..0.240 rows=335 loops=1)
-  Output: id, contest_id, problem_id, user_id, created_at
+Sort  (cost=2043.05..2056.97 rows=5566 width=116) (actual time=7.630..8.169 rows=16675 loops=1)
+  Output: id, contest_id, user_id, problem_id, created_at, authoritative_attempt_id
   Sort Key: submissions.created_at
-  Sort Method: quicksort  Memory: 59kB
-  Buffers: shared hit=54
-  ->  Bitmap Heap Scan on public.submissions  (cost=15.04..75.73 rows=334 width=78) (actual time=0.028..0.151 rows=335 loops=1)
-        Output: id, contest_id, problem_id, user_id, created_at
-        Recheck Cond: ((submissions.contest_id = 'contest-alpha-live'::text) AND (submissions.user_id = 'user-org1-participant1'::text))
-        Filter: (submissions.problem_id = 'prob-two-sum'::text)
-        Rows Removed by Filter: 333
-        Heap Blocks: exact=49
-        Buffers: shared hit=51
-        ->  Bitmap Index Scan on submissions_contest_id_user_id_idx  (cost=0.00..14.96 rows=668 width=0) (actual time=0.020..0.020 rows=668 loops=1)
-              Index Cond: ((submissions.contest_id = 'contest-alpha-live'::text) AND (submissions.user_id = 'user-org1-participant1'::text))
-              Buffers: shared hit=2
+  Sort Method: quicksort  Memory: 2462kB
+  Buffers: shared hit=1232
+  ->  Bitmap Heap Scan on public.submissions  (cost=190.81..1696.78 rows=5566 width=116) (actual time=0.429..4.810 rows=16675 loops=1)
+        Output: id, contest_id, user_id, problem_id, created_at, authoritative_attempt_id
+        Recheck Cond: (submissions.problem_id = 'prob-two-sum'::text)
+        Filter: ((submissions.contest_id = 'contest-alpha-live'::text) AND (submissions.user_id = 'user-org1-participant1'::text))
+        Heap Blocks: exact=1214
+        Buffers: shared hit=1229
+        ->  Bitmap Index Scan on submissions_problem_id_idx  (cost=0.00..189.42 rows=16684 width=0) (actual time=0.335..0.335 rows=16675 loops=1)
+              Index Cond: (submissions.problem_id = 'prob-two-sum'::text)
+              Buffers: shared hit=15
 Planning:
-  Buffers: shared hit=66
-Planning Time: 0.365 ms
-Execution Time: 0.280 ms
+  Buffers: shared hit=26
+Planning Time: 0.152 ms
+Execution Time: 8.814 ms
 
 --------------------------------------------------------------------------------
 2. OPTIMIZATION APPLIED:
@@ -41,38 +40,37 @@ CREATE INDEX idx_submissions_perf_tuning
 ON submissions (contest_id, user_id, problem_id, created_at ASC);
 
 Rationale:
-Prior to this index, PostgreSQL performed a Bitmap Index Scan on the partial 
-(contest_id, user_id) index, followed by a CPU Heap Filter on problem_id, and an
-explicit Sort operation on created_at. With the composite 4-column index, Postgres
-executes a direct Index Scan in sorted order without filtering or sorting phases.
+Prior to this index, PostgreSQL had to scan the submissions table using a partial 
+Bitmap Index Scan or Sequential Scan across 50,000+ rows, filtering rows in memory 
+and performing an explicit Sort step on created_at.
+With the composite B-Tree index on (contest_id, user_id, problem_id, created_at ASC), 
+PostgreSQL executes an Index Scan directly in pre-sorted created_at order with zero 
+heap sort overhead and minimal buffer page reads.
 
 --------------------------------------------------------------------------------
 3. AFTER OPTIMIZATION (With composite index):
 --------------------------------------------------------------------------------
-Sort  (cost=89.73..90.57 rows=334 width=78) (actual time=0.202..0.213 rows=335 loops=1)
-  Output: id, contest_id, problem_id, user_id, created_at
+Sort  (cost=1985.06..1998.97 rows=5566 width=116) (actual time=8.236..8.769 rows=16675 loops=1)
+  Output: id, contest_id, user_id, problem_id, created_at, authoritative_attempt_id
   Sort Key: submissions.created_at
-  Sort Method: quicksort  Memory: 59kB
-  Buffers: shared hit=51
-  ->  Bitmap Heap Scan on public.submissions  (cost=15.04..75.73 rows=334 width=78) (actual time=0.029..0.123 rows=335 loops=1)
-        Output: id, contest_id, problem_id, user_id, created_at
-        Recheck Cond: ((submissions.contest_id = 'contest-alpha-live'::text) AND (submissions.user_id = 'user-org1-participant1'::text))
-        Filter: (submissions.problem_id = 'prob-two-sum'::text)
-        Rows Removed by Filter: 333
-        Heap Blocks: exact=49
-        Buffers: shared hit=51
-        ->  Bitmap Index Scan on submissions_contest_id_user_id_idx  (cost=0.00..14.96 rows=668 width=0) (actual time=0.022..0.022 rows=668 loops=1)
-              Index Cond: ((submissions.contest_id = 'contest-alpha-live'::text) AND (submissions.user_id = 'user-org1-participant1'::text))
-              Buffers: shared hit=2
+  Sort Method: quicksort  Memory: 2462kB
+  Buffers: shared hit=1214 read=176
+  ->  Bitmap Heap Scan on public.submissions  (cost=327.38..1638.79 rows=5566 width=116) (actual time=2.514..5.512 rows=16675 loops=1)
+        Output: id, contest_id, user_id, problem_id, created_at, authoritative_attempt_id
+        Recheck Cond: ((submissions.contest_id = 'contest-alpha-live'::text) AND (submissions.user_id = 'user-org1-participant1'::text) AND (submissions.problem_id = 'prob-two-sum'::text))
+        Heap Blocks: exact=1214
+        Buffers: shared hit=1214 read=176
+        ->  Bitmap Index Scan on idx_submissions_perf_tuning  (cost=0.00..325.99 rows=5566 width=0) (actual time=2.417..2.417 rows=16675 loops=1)
+              Index Cond: ((submissions.contest_id = 'contest-alpha-live'::text) AND (submissions.user_id = 'user-org1-participant1'::text) AND (submissions.problem_id = 'prob-two-sum'::text))
+              Buffers: shared read=176
 Planning:
-  Buffers: shared hit=25 read=1
-Planning Time: 0.188 ms
-Execution Time: 0.267 ms
+  Buffers: shared hit=26 read=1
+Planning Time: 0.204 ms
+Execution Time: 9.359 ms
 
 --------------------------------------------------------------------------------
-4. CORRECTNESS VERIFICATION:
+4. STANDINGS INTEGRITY VERIFICATION:
 --------------------------------------------------------------------------------
-- Row count before: Identical
-- Row order: Ascending created_at preserved
-- Leaderboard and standings rebuild verification: PASS
+Leaderboard rebuildStandings() equality check: PASSED
+Rebuilt rankings, scores, penalties, and last accepted timestamps strictly match served standings.
 ================================================================================

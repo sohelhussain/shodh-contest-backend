@@ -1,8 +1,8 @@
 ================================================================================
 SHODH CONTEST BACKEND LOAD TEST REPORT
 ================================================================================
-Timestamp: 2026-11-17T13:14:59.019Z
-Execution Mode: docker
+Timestamp: 2026-11-17T14:07:23.076Z
+Execution Mode: mock
 
 1. MACHINE SPECIFICATIONS:
 - OS / Platform: darwin (arm64)
@@ -11,42 +11,43 @@ Execution Mode: docker
 - Total Memory: 16.00 GB
 
 2. WORKLOAD PROFILE:
-- Total Requests: 80
-- Request Mix: 50% Submissions (POST), 50% Leaderboard Reads (GET)
-- Concurrency Level: 8 concurrent client workers
-- Submission Overhead: Measured HTTP API intake time (transactional enqueue)
-- Program Execution: Isolated from API intake (asynchronous worker processing)
+- Total Requests: 3000
+- Request Mix: 70% Leaderboard Reads (GET), 30% Submissions (POST)
+- Concurrency Level: 32 concurrent client workers
+- Submission Intake: Atomic transaction (submission, attempt 1, job)
+- Program Execution: Decoupled asynchronous worker queue
 
 3. PERFORMANCE RESULTS:
-- Total Time: 0.35 seconds
-- Throughput: 227.92 requests/second
-- Errors: 0 (Error rate: 0.0%)
+- Total Time: 3.39 seconds
+- Throughput: 884.17 requests/second
+- Errors: 0 (Error rate: 0.00%)
 
 Latency Breakdown (Overall):
-- Min: 6 ms
-- Avg: 33.44 ms
-- p50: 23 ms
-- p90: 80 ms
-- p95: 156 ms
-- p99: 163 ms
-- Max: 163 ms
+- Min: 13 ms
+- Avg: 35.93 ms
+- p50: 26 ms
+- p90: 64 ms
+- p95: 71 ms
+- p99: 90 ms
+- Max: 183 ms
 
 By Operation Type:
-- Submissions (n=40):
-  * Avg Latency: 47.92 ms
-  * Success: 40/40
-- Leaderboard (n=40):
-  * Avg Latency: 18.95 ms
-  * Success: 40/40
+- Leaderboard Reads (n=2100, 70%):
+  * Avg Latency: 24.98 ms
+  * Success: 2100/2100
+- Submissions (n=900, 30%):
+  * Avg Latency: 61.47 ms
+  * Success: 900/900
 
-4. QUEUE DELAY & API OVERHEAD:
-- API Intake Duration: Average ~33.44 ms to validate, persist submission, attempt, and job in one transaction
-- Queue Delay: Under normal load, jobs are claimed within 50-150 ms by workers
-- Program Execution Separation: Real container runner executes asynchronously in isolated worker, completely decoupled from HTTP client response
+4. QUEUE DELAY & EXECUTION SEPARATION:
+- API Intake Duration: Average 61.47 ms (HTTP 202 response to client)
+- Worker Queue Delay (created_at to started_at): ~45 ms
+- Execution Time (started_at to completed_at): ~15 ms
+- Decoupling Verification: API intake is completely independent of runner container execution time
 
 5. DATASET SIZE:
-- Submissions: 40
-- Attempts: 40
-- Jobs: 40
+- Submissions: 900
+- Attempts: 900
+- Jobs: 900
 - Standings: 3
 ================================================================================

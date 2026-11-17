@@ -2,8 +2,8 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Install docker CLI so worker can invoke docker if needed
-RUN apk add --no-cache docker-cli
+# Install docker CLI and openssl for Prisma engine
+RUN apk add --no-cache docker-cli openssl
 
 COPY package*.json ./
 COPY prisma ./prisma/
@@ -15,11 +15,12 @@ COPY src ./src
 
 RUN npm run build
 RUN npx prisma generate
+RUN npx tsc prisma/seed.ts --outDir dist/prisma --skipLibCheck || true
 
 FROM node:20-alpine AS runner
 
 WORKDIR /app
-RUN apk add --no-cache docker-cli
+RUN apk add --no-cache docker-cli openssl
 
 COPY package*.json ./
 COPY prisma ./prisma/
