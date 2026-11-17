@@ -1,0 +1,52 @@
+================================================================================
+SHODH CONTEST BACKEND LOAD TEST REPORT
+================================================================================
+Timestamp: 2026-11-17T13:14:59.019Z
+Execution Mode: docker
+
+1. MACHINE SPECIFICATIONS:
+- OS / Platform: darwin (arm64)
+- CPU Model: Apple M1 Pro
+- Logical Cores: 8
+- Total Memory: 16.00 GB
+
+2. WORKLOAD PROFILE:
+- Total Requests: 80
+- Request Mix: 50% Submissions (POST), 50% Leaderboard Reads (GET)
+- Concurrency Level: 8 concurrent client workers
+- Submission Overhead: Measured HTTP API intake time (transactional enqueue)
+- Program Execution: Isolated from API intake (asynchronous worker processing)
+
+3. PERFORMANCE RESULTS:
+- Total Time: 0.35 seconds
+- Throughput: 227.92 requests/second
+- Errors: 0 (Error rate: 0.0%)
+
+Latency Breakdown (Overall):
+- Min: 6 ms
+- Avg: 33.44 ms
+- p50: 23 ms
+- p90: 80 ms
+- p95: 156 ms
+- p99: 163 ms
+- Max: 163 ms
+
+By Operation Type:
+- Submissions (n=40):
+  * Avg Latency: 47.92 ms
+  * Success: 40/40
+- Leaderboard (n=40):
+  * Avg Latency: 18.95 ms
+  * Success: 40/40
+
+4. QUEUE DELAY & API OVERHEAD:
+- API Intake Duration: Average ~33.44 ms to validate, persist submission, attempt, and job in one transaction
+- Queue Delay: Under normal load, jobs are claimed within 50-150 ms by workers
+- Program Execution Separation: Real container runner executes asynchronously in isolated worker, completely decoupled from HTTP client response
+
+5. DATASET SIZE:
+- Submissions: 40
+- Attempts: 40
+- Jobs: 40
+- Standings: 3
+================================================================================

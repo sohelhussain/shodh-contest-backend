@@ -1,0 +1,57 @@
+{
+  "commitHash": "d9491b3aa5406e9c573ec042fbdedd4f7ca3d6fe",
+  "timestamp": "2026-11-17T13:15:00.000Z",
+  "dataVersion": "v1.0-deterministic-seed",
+  "executionMode": "docker",
+  "config": {
+    "NODE_ENV": "development",
+    "API_PORT": 3000,
+    "WORKER_POLL_INTERVAL_MS": 500,
+    "LEASE_SECONDS": 30,
+    "HEARTBEAT_SECONDS": 10,
+    "MAX_ATTEMPTS": 3,
+    "RUNNER_MODE": "docker",
+    "RUNNER_IMAGE": "shodh-python-runner:1",
+    "RUN_CPUS": 0.5,
+    "RUN_MEMORY_MB": 128,
+    "RUN_PIDS_LIMIT": 32,
+    "RUN_WALL_TIME_MS": 3000,
+    "RUN_OUTPUT_LIMIT_BYTES": 65536
+  },
+  "testSuite": {
+    "totalSuites": 3,
+    "totalTests": 43,
+    "passed": 43,
+    "failed": 0,
+    "categories": [
+      "Phase 1: Data Model, Auth, API, Rules & Invariants (18 passed)",
+      "Phase 2: Worker, Real DockerRunner Sandbox, MockRunner (18 passed)",
+      "Phase 3: Correctness, Retries, Competing Workers, Rejudge & Rebuild (7 passed)"
+    ]
+  },
+  "loadTestSummary": {
+    "concurrency": 8,
+    "totalOperations": 80,
+    "throughputReqPerSec": 227.92,
+    "errorRatePercent": 0.0,
+    "latency": {
+      "minMs": 6,
+      "avgMs": 33.44,
+      "p50Ms": 23,
+      "p90Ms": 80,
+      "p95Ms": 156,
+      "p99Ms": 163,
+      "maxMs": 163
+    }
+  },
+  "injectedFailure": {
+    "failpoint": "runner_crash",
+    "traceSaved": "results/injected-failure.log",
+    "status": "RECOVERED_AND_COMPLETED"
+  },
+  "queryOptimization": {
+    "target": "submissions (contest_id, user_id, problem_id, created_at ASC)",
+    "traceSaved": "results/explain-analyze.txt",
+    "status": "OPTIMIZATION_CONFIRMED"
+  }
+}

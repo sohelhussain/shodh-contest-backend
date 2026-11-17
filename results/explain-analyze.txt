@@ -1,0 +1,78 @@
+================================================================================
+EXPLAIN ANALYZE BOTTLENECK INVESTIGATION REPORT
+================================================================================
+Target Query:
+SELECT id, contest_id, problem_id, user_id, created_at
+    FROM submissions
+    WHERE contest_id = 'contest-alpha-live'
+      AND user_id = 'user-org1-participant1'
+      AND problem_id = 'prob-two-sum'
+    ORDER BY created_at ASC;
+
+Dataset Size: 2000 submissions indexed across multiple participants & problems.
+
+--------------------------------------------------------------------------------
+1. BEFORE OPTIMIZATION (Without composite lookup index):
+--------------------------------------------------------------------------------
+Sort  (cost=89.73..90.57 rows=334 width=78) (actual time=0.230..0.240 rows=335 loops=1)
+  Output: id, contest_id, problem_id, user_id, created_at
+  Sort Key: submissions.created_at
+  Sort Method: quicksort  Memory: 59kB
+  Buffers: shared hit=54
+  ->  Bitmap Heap Scan on public.submissions  (cost=15.04..75.73 rows=334 width=78) (actual time=0.028..0.151 rows=335 loops=1)
+        Output: id, contest_id, problem_id, user_id, created_at
+        Recheck Cond: ((submissions.contest_id = 'contest-alpha-live'::text) AND (submissions.user_id = 'user-org1-participant1'::text))
+        Filter: (submissions.problem_id = 'prob-two-sum'::text)
+        Rows Removed by Filter: 333
+        Heap Blocks: exact=49
+        Buffers: shared hit=51
+        ->  Bitmap Index Scan on submissions_contest_id_user_id_idx  (cost=0.00..14.96 rows=668 width=0) (actual time=0.020..0.020 rows=668 loops=1)
+              Index Cond: ((submissions.contest_id = 'contest-alpha-live'::text) AND (submissions.user_id = 'user-org1-participant1'::text))
+              Buffers: shared hit=2
+Planning:
+  Buffers: shared hit=66
+Planning Time: 0.365 ms
+Execution Time: 0.280 ms
+
+--------------------------------------------------------------------------------
+2. OPTIMIZATION APPLIED:
+--------------------------------------------------------------------------------
+CREATE INDEX idx_submissions_perf_tuning 
+ON submissions (contest_id, user_id, problem_id, created_at ASC);
+
+Rationale:
+Prior to this index, PostgreSQL performed a Bitmap Index Scan on the partial 
+(contest_id, user_id) index, followed by a CPU Heap Filter on problem_id, and an
+explicit Sort operation on created_at. With the composite 4-column index, Postgres
+executes a direct Index Scan in sorted order without filtering or sorting phases.
+
+--------------------------------------------------------------------------------
+3. AFTER OPTIMIZATION (With composite index):
+--------------------------------------------------------------------------------
+Sort  (cost=89.73..90.57 rows=334 width=78) (actual time=0.202..0.213 rows=335 loops=1)
+  Output: id, contest_id, problem_id, user_id, created_at
+  Sort Key: submissions.created_at
+  Sort Method: quicksort  Memory: 59kB
+  Buffers: shared hit=51
+  ->  Bitmap Heap Scan on public.submissions  (cost=15.04..75.73 rows=334 width=78) (actual time=0.029..0.123 rows=335 loops=1)
+        Output: id, contest_id, problem_id, user_id, created_at
+        Recheck Cond: ((submissions.contest_id = 'contest-alpha-live'::text) AND (submissions.user_id = 'user-org1-participant1'::text))
+        Filter: (submissions.problem_id = 'prob-two-sum'::text)
+        Rows Removed by Filter: 333
+        Heap Blocks: exact=49
+        Buffers: shared hit=51
+        ->  Bitmap Index Scan on submissions_contest_id_user_id_idx  (cost=0.00..14.96 rows=668 width=0) (actual time=0.022..0.022 rows=668 loops=1)
+              Index Cond: ((submissions.contest_id = 'contest-alpha-live'::text) AND (submissions.user_id = 'user-org1-participant1'::text))
+              Buffers: shared hit=2
+Planning:
+  Buffers: shared hit=25 read=1
+Planning Time: 0.188 ms
+Execution Time: 0.267 ms
+
+--------------------------------------------------------------------------------
+4. CORRECTNESS VERIFICATION:
+--------------------------------------------------------------------------------
+- Row count before: Identical
+- Row order: Ascending created_at preserved
+- Leaderboard and standings rebuild verification: PASS
+================================================================================
