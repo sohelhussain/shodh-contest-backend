@@ -111,59 +111,92 @@ export class SubmissionsService {
     }
 
     // 5. Atomic transaction: create submission, attempt 1, and job
-    const result = await this.prisma.$transaction(async (tx) => {
-      const submission = await tx.submission.create({
-        data: {
-          contestId,
-          problemId: dto.problemId,
-          userId: user.id,
-          code: dto.code,
-          language,
-          runtimeConfig: dto.runtimeConfig || {
-            cpus: parseFloat(process.env.RUN_CPUS || '0.5'),
-            memoryMb: parseInt(process.env.RUN_MEMORY_MB || '128', 10),
-            wallTimeMs: parseInt(process.env.RUN_WALL_TIME_MS || '3000', 10),
-            pidsLimit: parseInt(process.env.RUN_PIDS_LIMIT || '32', 10),
+    try {
+      const result = await this.prisma.$transaction(async (tx) => {
+        const submission = await tx.submission.create({
+          data: {
+            contestId,
+            problemId: dto.problemId,
+            userId: user.id,
+            code: dto.code,
+            language,
+            runtimeConfig: dto.runtimeConfig || {
+              cpus: parseFloat(process.env.RUN_CPUS || '0.5'),
+              memoryMb: parseInt(process.env.RUN_MEMORY_MB || '128', 10),
+              wallTimeMs: parseInt(process.env.RUN_WALL_TIME_MS || '3000', 10),
+              pidsLimit: parseInt(process.env.RUN_PIDS_LIMIT || '32', 10),
+            },
+            problemVersionId: activeVersion.id,
+            suiteVersionId: activeSuite.id,
+            idempotencyKey: dto.idempotencyKey,
+            requestHash,
           },
-          problemVersionId: activeVersion.id,
-          suiteVersionId: activeSuite.id,
-          idempotencyKey: dto.idempotencyKey,
-          requestHash,
-        },
-      });
+        });
 
-      const attempt = await tx.attempt.create({
-        data: {
-          submissionId: submission.id,
-          attemptNo: 1,
-          problemVersionId: activeVersion.id,
-          suiteVersionId: activeSuite.id,
-          status: AttemptStatus.QUEUED,
-        },
-      });
+        const attempt = await tx.attempt.create({
+          data: {
+            submissionId: submission.id,
+            attemptNo: 1,
+            problemVersionId: activeVersion.id,
+            suiteVersionId: activeSuite.id,
+            status: AttemptStatus.QUEUED,
+          },
+        });
 
-      // Point authoritative_attempt_id initially to attempt 1
-      await tx.submission.update({
-        where: { id: submission.id },
-        data: { authoritativeAttemptId: attempt.id },
-      });
+        // Point authoritative_attempt_id initially to attempt 1
+        await tx.submission.update({
+          where: { id: submission.id },
+          data: { authoritativeAttemptId: attempt.id },
+        });
 
-      await tx.job.create({
-        data: {
+        await tx.job.create({
+          data: {
+            attemptId: attempt.id,
+            status: JobStatus.QUEUED,
+          },
+        });
+
+        return {
+          id: submission.id,
           attemptId: attempt.id,
-          status: JobStatus.QUEUED,
-        },
+          status: AttemptStatus.QUEUED,
+          message: 'Submission accepted for judging',
+        };
       });
 
-      return {
-        id: submission.id,
-        attemptId: attempt.id,
-        status: AttemptStatus.QUEUED,
-        message: 'Submission accepted for judging',
-      };
-    });
+      return result;
+    } catch (err: any) {
+      // Handle concurrent race condition where another parallel request inserted the key
+      if (err.code === 'P2002' || (err.message && err.message.includes('Unique constraint'))) {
+        const raced = await this.prisma.submission.findUnique({
+          where: {
+            contestId_userId_idempotencyKey: {
+              contestId,
+              userId: user.id,
+              idempotencyKey: dto.idempotencyKey,
+            },
+          },
+          include: { authoritativeAttempt: true },
+        });
 
-    return result;
+        if (raced) {
+          if (raced.requestHash === requestHash) {
+            return {
+              id: raced.id,
+              status: raced.authoritativeAttempt?.status || AttemptStatus.QUEUED,
+              verdict: raced.authoritativeAttempt?.verdict || null,
+              message: 'Existing submission returned (idempotent)',
+            };
+          }
+          throw new BusinessRuleException(
+            'Idempotency key reused with different request payload',
+            'IDEMPOTENCY_CONFLICT',
+            HttpStatus.CONFLICT,
+          );
+        }
+      }
+      throw err;
+    }
   }
 
   async getSubmission(user: any, submissionId: string) {

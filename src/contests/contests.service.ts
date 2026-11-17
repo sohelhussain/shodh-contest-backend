@@ -77,11 +77,31 @@ export class ContestsService {
       );
     }
 
-    return this.prisma.contestParticipant.create({
-      data: {
-        contestId,
-        userId: user.id,
-      },
+    return this.prisma.$transaction(async (tx) => {
+      const participant = await tx.contestParticipant.create({
+        data: {
+          contestId,
+          userId: user.id,
+        },
+      });
+
+      await tx.standing.upsert({
+        where: {
+          contestId_userId: {
+            contestId,
+            userId: user.id,
+          },
+        },
+        create: {
+          contestId,
+          userId: user.id,
+          totalScore: 0,
+          totalPenalty: 0,
+        },
+        update: {},
+      });
+
+      return participant;
     });
   }
 

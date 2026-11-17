@@ -144,13 +144,24 @@ export async function seed() {
     });
   }
 
-  // Participants
+  // Participants & Standings
+  const participantsData = [
+    { contestId: SEED_DATA.contests.alphaLive.id, userId: SEED_DATA.users.alphaParticipant1.id },
+    { contestId: SEED_DATA.contests.alphaLive.id, userId: SEED_DATA.users.alphaParticipant2.id },
+    { contestId: SEED_DATA.contests.betaFuture.id, userId: SEED_DATA.users.betaParticipant1.id },
+  ];
+
   await prisma.contestParticipant.createMany({
-    data: [
-      { contestId: SEED_DATA.contests.alphaLive.id, userId: SEED_DATA.users.alphaParticipant1.id },
-      { contestId: SEED_DATA.contests.alphaLive.id, userId: SEED_DATA.users.alphaParticipant2.id },
-      { contestId: SEED_DATA.contests.betaFuture.id, userId: SEED_DATA.users.betaParticipant1.id },
-    ],
+    data: participantsData,
+  });
+
+  await prisma.standing.createMany({
+    data: participantsData.map((p) => ({
+      contestId: p.contestId,
+      userId: p.userId,
+      totalScore: 0,
+      totalPenalty: 0,
+    })),
   });
 
   // Problems + Versions + Test Suites + Test Cases
