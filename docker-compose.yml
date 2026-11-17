@@ -9,7 +9,6 @@ services:
 
   db:
     image: postgres:16-alpine
-    container_name: shodh-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-shodh}
@@ -43,7 +42,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: shodh-api
     restart: unless-stopped
     command: ["node", "dist/src/main.js"]
     environment:
