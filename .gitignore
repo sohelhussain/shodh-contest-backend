@@ -3,4 +3,5 @@ dist
 .env
 results/*.log
 coverage
+tmp
 .DS_Store
