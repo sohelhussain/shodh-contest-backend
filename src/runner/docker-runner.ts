@@ -17,6 +17,19 @@ export class DockerRunner implements IRunner {
     problemPoints: number,
   ): Promise<RunResult> {
     const logger = appLogger.child({ execution_mode: 'docker' });
+
+    // Failpoint: runner_crash
+    if (process.env.FAILPOINT === 'runner_crash') {
+      logger.error('Injected failpoint: runner_crash triggered');
+      return {
+        verdict: Verdict.INFRA_FAILURE,
+        score: 0,
+        executionTimeMs: 0,
+        testResults: [],
+        executionMode: 'docker',
+      };
+    }
+
     const baseTmp = process.env.SANDBOX_TMP_DIR || path.join(process.cwd(), 'tmp', 'sandbox-runs');
     if (!fs.existsSync(baseTmp)) {
       fs.mkdirSync(baseTmp, { recursive: true });
