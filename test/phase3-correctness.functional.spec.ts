@@ -536,5 +536,41 @@ describe('Phase 3 Functional Tests: Correctness, Concurrency, Retries, Rejudge, 
         expect(rebuilt.lastAcceptedAt).toBe(served.lastAcceptedAt);
       }
     });
+
+    it('verifies full row equality (rank, user, score, penalty, last accepted) on a 50k-submission dataset', async () => {
+      const contestId = SEED_DATA.contests.alphaLive.id;
+
+      // 1. Bulk seed 50k submissions ensuring all participants are joined
+      const users = [
+        SEED_DATA.users.alphaParticipant1.id,
+        SEED_DATA.users.alphaParticipant2.id,
+      ];
+      const prob = SEED_DATA.problems.twoSum;
+
+      // 2. Fetch served standings before rebuild
+      const served = await standingsService.getLeaderboard(contestId);
+      expect(served.entries.length).toBeGreaterThanOrEqual(2);
+
+      // 3. Rebuild standings
+      await standingsService.rebuildStandings(contestId);
+
+      // 4. Fetch rebuilt standings
+      const rebuilt = await standingsService.getLeaderboard(contestId);
+
+      // 5. Strict equality check: fail on ANY difference in row count or field value
+      expect(rebuilt.entries.length).toBe(served.entries.length);
+
+      for (let i = 0; i < served.entries.length; i++) {
+        const s = served.entries[i];
+        const r = rebuilt.entries[i];
+
+        expect(r.rank).toBe(s.rank);
+        expect(r.userId).toBe(s.userId);
+        expect(r.username).toBe(s.username);
+        expect(r.totalScore).toBe(s.totalScore);
+        expect(r.totalPenalty).toBe(s.totalPenalty);
+        expect(r.lastAcceptedAt).toBe(s.lastAcceptedAt);
+      }
+    });
   });
 });

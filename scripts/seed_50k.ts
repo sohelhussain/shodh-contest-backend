@@ -12,6 +12,24 @@ async function seed50k() {
     'user-org1-participant2',
     'user-org2-participant1',
   ];
+
+  // Ensure all participating users have joined the contest so both joined participants
+  // and submissions correspond to valid contest standings
+  for (const u of users) {
+    await prisma.contestParticipant.upsert({
+      where: {
+        contestId_userId: {
+          contestId,
+          userId: u,
+        },
+      },
+      create: {
+        contestId,
+        userId: u,
+      },
+      update: {},
+    });
+  }
   const problems = [
     { problemId: 'prob-two-sum', versionId: 'pv-two-sum-1', suiteId: 'ts-two-sum-1' },
     { problemId: 'prob-palindrome', versionId: 'pv-pal-1', suiteId: 'ts-pal-1' },
