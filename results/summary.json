@@ -1,7 +1,7 @@
 {
   "timestamp": "2026-11-17T15:17:06.000Z",
   "dataVersion": "v2.3-50k-alternating-workload",
-  "executionMode": "docker-and-mock",
+  "executionMode": "mock",
   "config": {
     "NODE_ENV": "development",
     "API_PORT": 3000,
@@ -9,7 +9,7 @@
     "LEASE_SECONDS": 30,
     "HEARTBEAT_SECONDS": 10,
     "MAX_ATTEMPTS": 3,
-    "RUNNER_MODE": "docker",
+    "RUNNER_MODE": "mock",
     "RUNNER_IMAGE": "shodh-python-runner:1",
     "RUN_CPUS": 0.5,
     "RUN_MEMORY_MB": 128,
@@ -30,6 +30,7 @@
   },
   "alternatingWorkloadBenchmark": {
     "description": "Rigorous alternating schedule [BEFORE, AFTER, BEFORE, AFTER, BEFORE, AFTER] with full 50,000-submission reset and VACUUM ANALYZE before each run. Workload: 3,000 requests per run at Concurrency 32 (70% Leaderboard Reads, 30% Submissions)",
+    "execution_mode": "mock",
     "datasetSubmissions": 50000,
     "machine": "Apple M1 Pro (8 cores, 16.00 GB RAM)",
     "beforeBaseline": {
@@ -52,11 +53,6 @@
         "median": 251.31,
         "min": 189.18,
         "max": 265.13
-      },
-      "queueDelayMs": {
-        "median": 0.0,
-        "min": 0.0,
-        "max": 0.0
       }
     },
     "afterCoveringIndex": {
@@ -79,14 +75,9 @@
         "median": 197.96,
         "min": 195.16,
         "max": 202.74
-      },
-      "queueDelayMs": {
-        "median": 0.0,
-        "min": 0.0,
-        "max": 0.0
       }
     },
-    "measuredTradeOff": "The covering index idx_submissions_covering loses in the mixed HTTP intake workload (throughput median drops from 814.33 req/s to 735.84 req/s; p95 increases from 74 ms to 85 ms) because maintaining the additional secondary index B-Tree on every submission INSERT adds write overhead. However, the index achieves its intended goal inside the worker: it lowers standings recalculation duration from median 251.31 ms down to 197.96 ms.",
+    "statisticalAssessment": "Workload-level throughput and p95 ranges overlap and runs 1 to 6 drift downward over time, so the end-to-end difference is not distinguishable from noise. Standings recalc medians were 251 ms (before) vs 198 ms (after) but ranges overlap (before min 189, after min 195), n=3, inconclusive.",
     "queryLevelGain": {
       "baselineExecutionTimeMs": 11.47,
       "coveringIndexExecutionTimeMs": 5.68,

@@ -117,20 +117,20 @@ INCLUDE (id, authoritative_attempt_id);
 - **Root Cause**: Converts the execution into an **Index Only Scan**. Reads only 423 buffers, completely eliminates heap sorting, and avoids visiting table heap blocks for 99.9% of rows.
 
 ### C. Rigorous Alternating Workload Benchmark (Alternating 6 Runs on 50,000 Dataset)
-Tested on an Apple M1 Pro (8 cores, 16.00 GB RAM) with 3,000 requests per run at concurrency 32 (70% leaderboard reads, 30% submission writes) against 50,000 rows. Before every single run, the database was reset and seeded to the exact 50,000-submission state, followed by `VACUUM ANALYZE submissions`. The benchmark alternated strictly: `[BEFORE, AFTER, BEFORE, AFTER, BEFORE, AFTER]`.
+Tested on an Apple M1 Pro (8 cores, 16.00 GB RAM) with 3,000 requests per run at concurrency 32 (70% leaderboard reads, 30% submission writes) against 50,000 rows. Before every single run, the database was reset and seeded to the exact 50,000-submission state, followed by `VACUUM ANALYZE submissions`. The benchmark alternated strictly: `[BEFORE, AFTER, BEFORE, AFTER, BEFORE, AFTER]` in mock execution mode.
 
-| Metric | Before Baseline (Median [Min, Max]) | After Covering Index (Median [Min, Max]) | Net Measured Impact |
-| :--- | :--- | :--- | :--- |
-| **HTTP Throughput** | **814.33 req/s** [766.48, 888.89] | **735.84 req/s** [734.03, 885.48] | -9.6% (Write overhead on INSERT) |
-| **HTTP p95 Latency** | **74.0 ms** [69.0, 86.0] | **85.0 ms** [69.0, 85.0] | +14.8% (Slightly slower HTTP write path) |
-| **HTTP Avg Latency** | **39.12 ms** [35.72, 41.54] | **43.28 ms** [35.98, 43.42] | +4.16 ms |
-| **Standings Recalculation Time** | **251.31 ms** [189.18, 265.13] | **197.96 ms** [195.16, 202.74] | **-21.2% faster in worker** |
-| **Queue Delay (created to started)** | **0.0 ms** [0.0, 0.0] | **0.0 ms** [0.0, 0.0] | 0.0 ms |
+| Metric | Before Baseline (Median [Min, Max]) | After Covering Index (Median [Min, Max]) |
+| :--- | :--- | :--- |
+| **HTTP Throughput** | **814.33 req/s** [766.48, 888.89] | **735.84 req/s** [734.03, 885.48] |
+| **HTTP p95 Latency** | **74.0 ms** [69.0, 86.0] | **85.0 ms** [69.0, 85.0] |
+| **HTTP Avg Latency** | **39.12 ms** [35.72, 41.54] | **43.28 ms** [35.98, 43.42] |
+| **Standings Recalculation Time** | **251.31 ms** [189.18, 265.13] | **197.96 ms** [195.16, 202.74] |
 
-#### Measured Trade-Off Assessment:
-1. **End-to-End Workload Result**: When measuring the mixed HTTP intake workload (which contains 30% INSERT writes), the covering index loses end-to-end: median throughput drops from 814.33 req/s to 735.84 req/s. Every new submission INSERT must maintain an additional B-Tree index, which incurs write overhead on the API transaction.
-2. **Query-Level & Worker Recalculation Gain**: As an isolated query, the target query running under `idx_submissions_covering` drops execution time from 11.47 ms down to 5.68 ms (-50.5%), completely eliminating a 3.6 MB quicksort and dropping buffer hits from 1,493 to 423. In the worker process, this query optimization cuts total standings recalculation duration across problem sets for 16,666+ user submissions from a median of 251.31 ms down to 197.96 ms (-21.2%).
-3. **Plain Trade-off Statement**: Adding `idx_submissions_covering` is a deliberate architectural trade-off that sacrifices ~9.6% of frontend HTTP ingestion throughput to accelerate background worker recalculation time by 21.2%.
+#### Workload & Statistical Assessment:
+Workload-level throughput and p95 ranges overlap and runs 1 to 6 drift downward over time, so the end-to-end difference is not distinguishable from noise. Standings recalc medians were 251 ms (before) vs 198 ms (after) but ranges overlap (before min 189, after min 195), n=3, inconclusive.
+
+#### Why Standings Recalculation Takes ~200 ms vs Single Query 6–11 ms:
+Standings recalculation (`calculateUserStanding`) executes multiple database queries per participant: it first queries the contest metadata (`findUnique`), then queries the problem set (`findMany` returning $N$ problems, here 3 problems), and for each problem queries all submissions ordered by `createdAt ASC`, with nested relation joins for `authoritativeAttempt` and `problemVersion`. For a participant with over 16,666 submissions on a problem, Prisma issues a primary submission select followed by batch foreign-key lookups for attempt and version records, deserializes and instantiates 16,666+ JavaScript objects into memory, and traverses them in Node.js to evaluate problem score, tie-break penalties, and acceptance rules. The single raw SQL query measures only index-block traversal in Postgres for one problem, whereas full recalculation encompasses multiple queries across all contest problems plus significant Prisma ORM object mapping and in-memory evaluation overhead.
 
 ---
 
@@ -152,6 +152,7 @@ Tested on an Apple M1 Pro (8 cores, 16.00 GB RAM) with 3,000 requests per run at
 
 ## 7. Known Limitations
 
-1. **Host Kernel Sharing**: Docker containers share the host Linux kernel. In untrusted multi-tenant environments, microVMs (e.g. AWS Firecracker / Kata Containers) provide stronger hypervisor isolation.
-2. **PostgreSQL Polling**: Workers currently poll PostgreSQL every 500ms using `FOR UPDATE SKIP LOCKED`. For hundreds of idle workers, PostgreSQL `LISTEN / NOTIFY` or advisory locks can eliminate polling queries.
-3. **Single Postgres Primary**: Standings and queue transactions run against a single primary database. Scaling beyond 10,000 requests/sec would benefit from read replicas for leaderboard queries and table partitioning on `submissions` by `contest_id`.
+1. **Queue Delay Metric Unavailability Under Mock Benchmark**: During synthetic HTTP benchmark runs, workers are stopped to avoid concurrency interference, leaving submitted jobs unprocessed in `QUEUED` state. The queue delay metric (`created_at` to `started_at`) was computed via `EXTRACT(EPOCH FROM (updated_at - created_at)) * 1000 FROM jobs WHERE status IN ('COMPLETED', 'RUNNING')`; because the test benchmark stops background workers during the intake run, zero benchmark jobs transitioned to `RUNNING`/`COMPLETED`, causing the metric to query 0 matching benchmark rows and report 0.0 ms. Accurate real-time queue latency profiling requires instrumented worker telemetry running concurrently under load.
+2. **Host Kernel Sharing**: Docker containers share the host Linux kernel. In untrusted multi-tenant environments, microVMs (e.g. AWS Firecracker / Kata Containers) provide stronger hypervisor isolation.
+3. **PostgreSQL Polling**: Workers currently poll PostgreSQL every 500ms using `FOR UPDATE SKIP LOCKED`. For hundreds of idle workers, PostgreSQL `LISTEN / NOTIFY` or advisory locks can eliminate polling queries.
+4. **Single Postgres Primary**: Standings and queue transactions run against a single primary database. Scaling beyond 10,000 requests/sec would benefit from read replicas for leaderboard queries and table partitioning on `submissions` by `contest_id`.
