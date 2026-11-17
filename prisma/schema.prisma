@@ -1,0 +1,297 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  ORGANIZER
+  PARTICIPANT
+}
+
+enum AttemptStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum Verdict {
+  ACCEPTED
+  WRONG_ANSWER
+  RUNTIME_ERROR
+  TIME_LIMIT
+  OUTPUT_LIMIT
+  COMPILE_ERROR
+  INFRA_FAILURE
+}
+
+enum JobStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+model User {
+  id           String               @id @default(uuid())
+  username     String               @unique
+  email        String               @unique
+  createdAt    DateTime             @default(now()) @map("created_at")
+  memberships  Membership[]
+  participants ContestParticipant[]
+  submissions  Submission[]
+  standings    Standing[]
+
+  @@map("users")
+}
+
+model Organization {
+  id          String       @id @default(uuid())
+  name        String
+  createdAt   DateTime     @default(now()) @map("created_at")
+  memberships Membership[]
+  contests    Contest[]
+  problems    Problem[]
+
+  @@map("organizations")
+}
+
+model Membership {
+  id             String       @id @default(uuid())
+  userId         String       @map("user_id")
+  organizationId String       @map("organization_id")
+  role           Role
+  createdAt      DateTime     @default(now()) @map("created_at")
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+  @@index([userId])
+  @@index([organizationId])
+  @@map("memberships")
+}
+
+model Contest {
+  id             String               @id @default(uuid())
+  organizationId String               @map("organization_id")
+  title          String
+  description    String?
+  startTime      DateTime             @map("start_time")
+  endTime        DateTime             @map("end_time")
+  createdAt      DateTime             @default(now()) @map("created_at")
+
+  organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  participants ContestParticipant[]
+  problems     Problem[]
+  submissions  Submission[]
+  standings    Standing[]
+
+  @@index([organizationId])
+  @@map("contests")
+}
+
+model ContestParticipant {
+  id        String   @id @default(uuid())
+  contestId String   @map("contest_id")
+  userId    String   @map("user_id")
+  joinedAt  DateTime @default(now()) @map("joined_at")
+
+  contest Contest @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([contestId, userId])
+  @@index([contestId])
+  @@index([userId])
+  @@map("contest_participants")
+}
+
+model Problem {
+  id               String           @id @default(uuid())
+  organizationId   String           @map("organization_id")
+  contestId        String           @map("contest_id")
+  title            String
+  description      String
+  points           Int              @default(100)
+  timeLimitMs      Int              @default(2000) @map("time_limit_ms")
+  memoryLimitMb    Int              @default(128) @map("memory_limit_mb")
+  createdAt        DateTime         @default(now()) @map("created_at")
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contest      Contest          @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  versions     ProblemVersion[]
+  testSuites   TestSuite[]
+  submissions  Submission[]
+
+  @@index([contestId])
+  @@index([organizationId])
+  @@map("problems")
+}
+
+model ProblemVersion {
+  id            String       @id @default(uuid())
+  problemId     String       @map("problem_id")
+  versionNumber Int          @map("version_number")
+  title         String
+  description   String
+  points        Int
+  timeLimitMs   Int          @map("time_limit_ms")
+  memoryLimitMb Int          @map("memory_limit_mb")
+  createdAt     DateTime     @default(now()) @map("created_at")
+
+  problem     Problem      @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  submissions Submission[]
+  attempts    Attempt[]
+
+  @@unique([problemId, versionNumber])
+  @@index([problemId])
+  @@map("problem_versions")
+}
+
+model TestSuite {
+  id            String       @id @default(uuid())
+  problemId     String       @map("problem_id")
+  versionNumber Int          @map("version_number")
+  isActive      Boolean      @default(true) @map("is_active")
+  createdAt     DateTime     @default(now()) @map("created_at")
+
+  problem     Problem      @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  testCases   TestCase[]
+  submissions Submission[]
+  attempts    Attempt[]
+
+  @@unique([problemId, versionNumber])
+  @@index([problemId])
+  @@map("test_suites")
+}
+
+model TestCase {
+  id             String              @id @default(uuid())
+  testSuiteId    String              @map("test_suite_id")
+  input          String
+  expectedOutput String              @map("expected_output")
+  isHidden       Boolean             @default(false) @map("is_hidden")
+  orderIndex     Int                 @default(0) @map("order_index")
+  createdAt      DateTime            @default(now()) @map("created_at")
+
+  testSuite   TestSuite           @relation(fields: [testSuiteId], references: [id], onDelete: Cascade)
+  testResults AttemptTestResult[]
+
+  @@index([testSuiteId])
+  @@map("test_cases")
+}
+
+model Submission {
+  id                     String    @id @default(uuid())
+  contestId              String    @map("contest_id")
+  problemId              String    @map("problem_id")
+  userId                 String    @map("user_id")
+  code                   String
+  language               String    @default("python")
+  runtimeConfig          Json      @map("runtime_config")
+  problemVersionId       String    @map("problem_version_id")
+  suiteVersionId         String    @map("suite_version_id")
+  idempotencyKey         String    @map("idempotency_key")
+  requestHash            String    @map("request_hash")
+  authoritativeAttemptId String?   @unique @map("authoritative_attempt_id")
+  createdAt              DateTime  @default(now()) @map("created_at")
+
+  contest              Contest        @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  problem              Problem        @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  user                 User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  problemVersion       ProblemVersion @relation(fields: [problemVersionId], references: [id], onDelete: Cascade)
+  suiteVersion         TestSuite      @relation(fields: [suiteVersionId], references: [id], onDelete: Cascade)
+  authoritativeAttempt Attempt?       @relation("AuthoritativeAttempt", fields: [authoritativeAttemptId], references: [id], onDelete: SetNull)
+  attempts             Attempt[]      @relation("SubmissionAttempts")
+
+  @@unique([contestId, userId, idempotencyKey])
+  @@index([contestId, userId])
+  @@index([problemId])
+  @@index([createdAt, id])
+  @@map("submissions")
+}
+
+model Attempt {
+  id               String        @id @default(uuid())
+  submissionId     String        @map("submission_id")
+  attemptNo        Int           @map("attempt_no")
+  problemVersionId String        @map("problem_version_id")
+  suiteVersionId   String        @map("suite_version_id")
+  status           AttemptStatus @default(QUEUED)
+  verdict          Verdict?
+  score            Int           @default(0)
+  leaseToken       String?       @map("lease_token")
+  leaseExpiresAt   DateTime?     @map("lease_expires_at")
+  workerId         String?       @map("worker_id")
+  executionTimeMs  Int?          @map("execution_time_ms")
+  createdAt        DateTime      @default(now()) @map("created_at")
+  updatedAt        DateTime      @updatedAt @map("updated_at")
+
+  submission             Submission          @relation("SubmissionAttempts", fields: [submissionId], references: [id], onDelete: Cascade)
+  problemVersion         ProblemVersion      @relation(fields: [problemVersionId], references: [id], onDelete: Cascade)
+  suiteVersion           TestSuite           @relation(fields: [suiteVersionId], references: [id], onDelete: Cascade)
+  authoritativeSubmission Submission?        @relation("AuthoritativeAttempt")
+  testResults            AttemptTestResult[]
+  job                    Job?
+
+  @@unique([submissionId, attemptNo])
+  @@index([submissionId])
+  @@index([status, leaseExpiresAt])
+  @@map("attempts")
+}
+
+model AttemptTestResult {
+  id              String   @id @default(uuid())
+  attemptId       String   @map("attempt_id")
+  testCaseId      String   @map("test_case_id")
+  passed          Boolean  @default(false)
+  executionTimeMs Int      @default(0) @map("execution_time_ms")
+  output          String?
+  error           String?
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  attempt  Attempt  @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  testCase TestCase @relation(fields: [testCaseId], references: [id], onDelete: Cascade)
+
+  @@index([attemptId])
+  @@index([testCaseId])
+  @@map("attempt_test_results")
+}
+
+model Job {
+  id             String    @id @default(uuid())
+  attemptId      String    @unique @map("attempt_id")
+  status         JobStatus @default(QUEUED)
+  attemptsCount  Int       @default(0) @map("attempts_count")
+  leaseToken     String?   @map("lease_token")
+  leaseExpiresAt DateTime? @map("lease_expires_at")
+  workerId       String?   @map("worker_id")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  attempt Attempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+
+  @@index([status, leaseExpiresAt])
+  @@map("jobs")
+}
+
+model Standing {
+  id             String    @id @default(uuid())
+  contestId      String    @map("contest_id")
+  userId         String    @map("user_id")
+  totalScore     Int       @default(0) @map("total_score")
+  totalPenalty   Int       @default(0) @map("total_penalty")
+  lastAcceptedAt DateTime? @map("last_accepted_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  contest Contest @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([contestId, userId])
+  @@index([contestId, totalScore(sort: Desc), totalPenalty(sort: Asc), lastAcceptedAt(sort: Asc), userId(sort: Asc)])
+  @@map("standings")
+}
