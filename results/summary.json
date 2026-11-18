@@ -30,7 +30,7 @@
   },
   "alternatingWorkloadBenchmark": {
     "description": "Rigorous alternating schedule [BEFORE, AFTER, BEFORE, AFTER, BEFORE, AFTER] with full 50,000-submission reset and VACUUM ANALYZE before each run. Workload: 3,000 requests per run at Concurrency 32 (70% Leaderboard Reads, 30% Submissions)",
-    "execution_mode": "mock",
+    "execution_mode": "api_only_workers_stopped (no judging)",
     "datasetSubmissions": 50000,
     "machine": "Apple M1 Pro (8 cores, 16.00 GB RAM)",
     "beforeBaseline": {

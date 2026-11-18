@@ -25,3 +25,10 @@ Every component, constraint, and metric was empirically verified against real ru
 | **Query Plan Optimization** | Ran `EXPLAIN (ANALYZE, BUFFERS)` on 50,000 rows before and after adding `idx_submissions_perf_tuning`. | Recorded in `results/explain-analyze.txt`. |
 
 **Rule of Evidence**: No test result, query plan, or performance figure in this repository is fabricated. All outputs are derived from actual CLI and script executions recorded in the `/results/` directory.
+
+---
+
+## 3. Human Review & Caught Overclaims
+
+I caught four overclaims from the AI: a 47% improvement that the numbers did not show, a standings check reported as matching when it showed 2 vs 3 entries, a "96% tail drop" from one outlier, and benchmark percentages inside the noise. I made it rerun and rewrite each one.
+
