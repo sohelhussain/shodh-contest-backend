@@ -41,11 +41,17 @@ Authentication uses a trusted development HMAC-SHA256 signature fixture:
 
 ### Helper to Generate HMAC Signatures
 
+You can use the helper script `scripts/sign.sh`:
 ```bash
-# In Bash (using OpenSSL):
+./scripts/sign.sh user-org1-participant1
+# Outputs: 98cce5625041feb9acce4c39b8545034f79b9245c5731b64cef96fdc886f301f
+```
+
+Or manually using OpenSSL:
+```bash
 SECRET="change_me_dev_only"
 USER_ID="user-org1-participant1"
-SIGNATURE=$(echo -n "$USER_ID" | openssl dgst -sha256 -hmac "$SECRET" | awk '{print $NF}')
+SIGNATURE=$(printf "%s" "$USER_ID" | openssl dgst -sha256 -hmac "$SECRET" | awk '{print $NF}')
 ```
 
 ---
@@ -56,7 +62,7 @@ SIGNATURE=$(echo -n "$USER_ID" | openssl dgst -sha256 -hmac "$SECRET" | awk '{pr
 ```bash
 curl -X GET http://localhost:3000/contests \
   -H "x-dev-user-id: user-org1-participant1" \
-  -H "x-dev-signature: 4945ce3439b1ca4eb086fb4b419842c54fe1a011ef9cbcfec1208942b08383a5"
+  -H "x-dev-signature: 98cce5625041feb9acce4c39b8545034f79b9245c5731b64cef96fdc886f301f"
 ```
 
 ### B. Submit Code to Contest
@@ -64,7 +70,7 @@ curl -X GET http://localhost:3000/contests \
 curl -X POST http://localhost:3000/contests/contest-alpha-live/submissions \
   -H "Content-Type: application/json" \
   -H "x-dev-user-id: user-org1-participant1" \
-  -H "x-dev-signature: 4945ce3439b1ca4eb086fb4b419842c54fe1a011ef9cbcfec1208942b08383a5" \
+  -H "x-dev-signature: 98cce5625041feb9acce4c39b8545034f79b9245c5731b64cef96fdc886f301f" \
   -d '{
     "problemId": "prob-two-sum",
     "code": "import sys\na, b = map(int, sys.stdin.read().split())\nprint(a + b)\n",
@@ -77,14 +83,14 @@ curl -X POST http://localhost:3000/contests/contest-alpha-live/submissions \
 ```bash
 curl -X GET http://localhost:3000/submissions/<SUBMISSION_ID> \
   -H "x-dev-user-id: user-org1-participant1" \
-  -H "x-dev-signature: 4945ce3439b1ca4eb086fb4b419842c54fe1a011ef9cbcfec1208942b08383a5"
+  -H "x-dev-signature: 98cce5625041feb9acce4c39b8545034f79b9245c5731b64cef96fdc886f301f"
 ```
 
 ### D. Get Live Leaderboard
 ```bash
 curl -i -X GET http://localhost:3000/contests/contest-alpha-live/leaderboard \
   -H "x-dev-user-id: user-org1-participant1" \
-  -H "x-dev-signature: 4945ce3439b1ca4eb086fb4b419842c54fe1a011ef9cbcfec1208942b08383a5"
+  -H "x-dev-signature: 98cce5625041feb9acce4c39b8545034f79b9245c5731b64cef96fdc886f301f"
 ```
 
 ### E. Organizer Rejudge
@@ -92,7 +98,7 @@ curl -i -X GET http://localhost:3000/contests/contest-alpha-live/leaderboard \
 curl -X POST http://localhost:3000/submissions/<SUBMISSION_ID>/rejudge \
   -H "Content-Type: application/json" \
   -H "x-dev-user-id: user-org1-organizer" \
-  -H "x-dev-signature: 27ffb2a0db361fbabeb78dbec748c26c11db70a049f506041ec1a9ec19efcf9f" \
+  -H "x-dev-signature: 355f92a6643f80a58bba8bcf960dd4894fbdfbd821d212a60a42707b3fad055d" \
   -d '{}'
 ```
 
