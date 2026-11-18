@@ -4,6 +4,16 @@ A production-grade, deterministic coding contest platform backend built with Nes
 
 ---
 
+## Demo
+
+https://github.com/user-attachments/assets/demo.mp4
+
+> **Demo Video**: [Watch Demo Video](docs/assets/demo.mp4)
+
+<video src="docs/assets/demo.mp4" controls="controls" width="100%" height="auto"></video>
+
+---
+
 ## 1. One-Command Quickstart
 
 Start the entire system (Database, Migrations, Seed Data, API, and 2 Worker replicas):
