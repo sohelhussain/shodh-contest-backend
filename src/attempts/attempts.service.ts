@@ -76,6 +76,8 @@ export class AttemptsService {
       verdict: attempt.verdict,
       score: attempt.score,
       executionTimeMs: attempt.executionTimeMs,
+      leaseExpiresAt: isOrg ? attempt.leaseExpiresAt : undefined,
+      workerId: isOrg ? attempt.workerId : undefined,
       createdAt: attempt.createdAt,
       updatedAt: attempt.updatedAt,
       testResults: sanitizedTestResults,

@@ -216,6 +216,23 @@ export class SubmissionsService {
       );
     }
 
+    const sanitizeAttempt = (att: any) => {
+      if (!att) return null;
+      return {
+        id: att.id,
+        submissionId: att.submissionId,
+        attemptNo: att.attemptNo,
+        problemVersionId: att.problemVersionId,
+        suiteVersionId: att.suiteVersionId,
+        status: att.status,
+        verdict: att.verdict,
+        score: att.score,
+        executionTimeMs: att.executionTimeMs,
+        createdAt: att.createdAt,
+        updatedAt: att.updatedAt,
+      };
+    };
+
     return {
       id: submission.id,
       contestId: submission.contestId,
@@ -226,8 +243,8 @@ export class SubmissionsService {
       runtimeConfig: submission.runtimeConfig,
       createdAt: submission.createdAt,
       authoritativeAttemptId: submission.authoritativeAttemptId,
-      authoritativeAttempt: submission.authoritativeAttempt,
-      attempts: isOrg ? submission.attempts : undefined,
+      authoritativeAttempt: sanitizeAttempt(submission.authoritativeAttempt),
+      attempts: isOrg && submission.attempts ? submission.attempts.map(sanitizeAttempt) : undefined,
     };
   }
 

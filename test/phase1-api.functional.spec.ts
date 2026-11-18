@@ -404,5 +404,48 @@ describe('Phase 1 Functional Tests: Data Model, Auth, API, Rules & Invariants', 
         expect(res.body.job.testCases.length).toBeGreaterThan(0);
       }
     });
+
+    it('strictly redacts internal worker fields (leaseToken, leaseExpiresAt, workerId) from participant responses', async () => {
+      const aliceHeaders = makeDevHeaders(SEED_DATA.users.alphaParticipant1.id);
+      const subRes = await request(app.getHttpServer())
+        .post(`/contests/${SEED_DATA.contests.alphaLive.id}/submissions`)
+        .set(aliceHeaders)
+        .send({
+          problemId: SEED_DATA.problems.twoSum.id,
+          code: 'print("redaction-test")',
+          idempotencyKey: 'alice-redaction-test',
+        });
+      const submissionId = subRes.body.id;
+
+      // Check submission status response
+      const viewRes = await request(app.getHttpServer())
+        .get(`/submissions/${submissionId}`)
+        .set(aliceHeaders);
+
+      expect(viewRes.status).toBe(200);
+      const viewBodyStr = JSON.stringify(viewRes.body);
+      expect(viewBodyStr).not.toContain('leaseToken');
+      expect(viewRes.body.authoritativeAttempt?.leaseToken).toBeUndefined();
+      expect(viewRes.body.authoritativeAttempt?.leaseExpiresAt).toBeUndefined();
+      expect(viewRes.body.authoritativeAttempt?.workerId).toBeUndefined();
+
+      // Check submission list response
+      const listRes = await request(app.getHttpServer())
+        .get(`/contests/${SEED_DATA.contests.alphaLive.id}/submissions`)
+        .set(aliceHeaders);
+
+      expect(listRes.status).toBe(200);
+      const listBodyStr = JSON.stringify(listRes.body);
+      expect(listBodyStr).not.toContain('leaseToken');
+
+      // Check leaderboard response
+      const lbRes = await request(app.getHttpServer())
+        .get(`/contests/${SEED_DATA.contests.alphaLive.id}/leaderboard`)
+        .set(aliceHeaders);
+
+      expect(lbRes.status).toBe(200);
+      const lbBodyStr = JSON.stringify(lbRes.body);
+      expect(lbBodyStr).not.toContain('leaseToken');
+    });
   });
 });
